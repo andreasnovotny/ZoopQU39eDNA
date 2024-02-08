@@ -1,0 +1,317 @@
+---
+title: "QU39 Zooplankton Time series"
+---
+
+
+# 0. Prepare environment
+
+Load necessary packages and import functions.
+
+```{r}
+# Data import
+library(googledrive)
+library(readxl)
+library(phyloseq)
+source("Code/DownloadDatasets.R")
+
+
+# All data format modifications and filtering and plotting
+library(tidyverse)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+source("Code/Functions.R")
+
+# Specific plotting tools
+library(plotly)
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+```
+
+The flowing code will download the needed data sets from Google Drive server and put them in the Data_import directory. Only has to be run once after cloning this directory.
+
+```{r eval=FALSE, include=FALSE}
+# Confirm authorisation with googledrive
+drive_auth()
+
+# Update datasets.
+# These functions refere to code specifyed under Code/Import_datasets.R.
+update_DNA_datasets()
+update_Contributed_data()
+
+```
+
+# 1. Read and combine sequence data sets
+
+## Data components
+
+The COI Sequencing data are downloaded in the compact format with a separate ASV, Taxonomy, and Sample Data table. The data tables are read separately and then merged into a tidy data tibble, resembling the data format of most zooplankton count data sets.
+
+```{r}
+# Import downloaded rds (compact r data) files
+ASV_COI <- readRDS("Data_import/COI/ASV_COI.rds")
+Samptab_COI <- readRDS("Data_import/COI/Samptab_COI.rds")
+Taxtab_COI <- readRDS("Data_import/COI/Taxtab_COI.rds")
+
+# Combine the three components to a tidy data tibble
+df_COI <-
+  full_join(Taxtab_COI, ASV_COI, by = "ASV") %>%
+  pivot_longer(!1:12, names_to = "Library_ID", values_to = "Abundance") %>%
+  full_join(Samptab_COI, by = "Library_ID")
+```
+
+This is the contributed data set from Catherinas 18S sequencing project. The data is downloaded as a Phyloseq object, and melted into a data frame to resemble the data above.
+
+```{r}
+df_18S_ts <- readRDS("Data_import/Contributed18S/ps_18S.rds") %>% psmelt()
+```
+
+
+
+```{r}
+# Import downloaded rds (compact r data) files
+ASV_12S <- readRDS("Data_import/12S/ASV_12S.rds")
+Samptab_12S <- readRDS("Data_import/12S/Samptab_12S.rds")
+Taxtab_12S <- readRDS("Data_import/12S/Taxtab_12S.rds")
+
+
+# Combine the three components to a tidy data tibble
+df_12S <-
+  full_join(Taxtab_12S, ASV_12S, by = "ASV") %>% 
+  pivot_longer(!1:11, names_to = "Library_ID", values_to = "Abundance") %>% 
+  full_join(Samptab_12S, by = "Library_ID")
+```
+
+
+
+## Defining metazoan phyla
+
+Specifying global filtering parameter: What phyla are present in metazoa?
+
+```{r}
+metazoa <- c("Arthropoda",
+             "Cnidaria",
+             "Chaetognatha",
+             "Annelida",
+             "Porifera",
+             "Echinodermata",
+             "Mollusca",
+             "Phoronida",
+             "Bryozoa",
+             "Nemertea",
+             "Ctenophora",
+             "Priapulida",
+             "Rotifera",
+             "Chordata",
+             "Platyhelminthes")
+```
+
+
+## Calculate eDNA Index and clean up datasetds
+
+In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
+
+
+```{r}
+# Filter samples in the dataset
+eDNA_COI <- df_COI %>%
+  filter(Project_name == "QU39",
+         Sample_type == "eDNA",
+         phylum %in% metazoa)
+
+# Species level index
+eDNA_COI_index_species <- eDNA_COI %>% 
+  mutate(Taxa = lca.taxon,
+         Abundance = Abundance,
+         Depth = Line_out_depth,
+         Date = Sample_date) %>% 
+  collapseRAindex(Library_ID)
+
+# Genus level ind
+eDNA_COI_index_genus <- eDNA_COI %>% 
+  mutate(Taxa = genus,
+         Abundance = Abundance,
+         Depth = Line_out_depth,
+         Date = Sample_date) %>% 
+  collapseRAindex(Library_ID)
+```
+
+
+```{r}
+# Clean up datasets
+COI_genus <- eDNA_COI_index_genus %>% 
+  filter(Taxa %in% getGenusList(.)) %>% 
+  mutate(Depth = as.numeric(Depth),
+         Depth = ifelse(Depth>200, 250, Depth),
+         Date = as_date(Date)) %>%
+  filter(is.na(Depth)==F) %>%
+  group_by(Library_ID) %>% 
+  filter(sum(Abundance)>100)
+
+
+COI_species <- eDNA_COI_index_species %>% 
+  filter(Taxa %in% getSpeciesList(.)) %>% 
+  mutate(Depth = as.numeric(Depth),
+         Depth = ifelse(Depth>200, 250, Depth),
+         Date = as_date(Date)) %>%
+  filter(is.na(Depth)==F) %>%
+  group_by(Library_ID) %>% 
+  filter(sum(Abundance)>100)
+```
+
+# 2. Plot Index Profiles
+
+## Interpolated profiles
+```{r}
+#' Wrapper to interpolate all taxa
+
+interpolateAllTaxa <- function(Data, Taxa) {
+  Data %>%
+  filter(Taxa == Taxa) %>% 
+  interpolate_2D(x1 = Date, x2 = Depth, y = RA_Index, x1res = 1, x2res = 1) %>%
+  mutate(Taxa = Taxa)
+}
+
+
+
+COI_genus %>%
+  filter(Taxa == "Acartia") %>% 
+  interpolate_2D(x1 = Date, x2 = Depth, y = RA_Index, x1res = 1, x2res = 1) %>% 
+  mutate(Taxa = "Acartia")
+
+COI_species %>% 
+  pull(Taxa) %>% 
+  unique()
+  
+```
+
+
+
+# Plot time series COI
+```{r}
+
+eDNA_COI_index_species %>% 
+  filter(Taxa %in% getSpeciesList(., min_obs = 10)) %>% 
+  filter(RA_Index > 0) %>% 
+  group_by(Taxa, Date, Depth) %>% 
+  summarize(RA_Index = mean(RA_Index),
+            Abundance = mean(Abundance)) %>%
+  mutate(Depth = factor(Depth, levels = rev(c("0", "5", "30", "100", "260")))) %>%
+  ggplot() +
+  
+  geom_point(aes(Date, Depth,
+                 color = RA_Index), shape = 15) +
+  facet_wrap(facets = "Taxa") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  labs(title = "Species Level eDNA with Vertical Resolution") +
+  scale_color_gradient2(high = scales::muted("red"),
+                       low = scales::muted("white"))
+  
+
+```
+
+# 3. plot CTD data
+
+```{r}
+
+drops <- read_excel("./Data_import/CTD.xlsx", sheet = "Drops")
+CTD <- read_excel("./Data_import/CTD.xlsx", sheet = "Data") %>% 
+  transmute(CastPK = `Cast PK`,
+            Distance_from_station = `Distance from station`,
+            Station,
+            Time = `Measurement time`,
+            Date = as_date(Time), 
+            Depth = `Depth (m)`,
+            Conductivity = `Conductivity (mS/cm)`,
+            Temperature = `Temperature (deg C)`,
+            Pressure = `Pressure (dbar)`,
+            PAR = `PAR (umol m-2 s-1)`,
+            Chlorophyll = `Fluorometry Chlorophyll (ug/L)`,
+            Turbidity = `Turbidity (FTU)`,
+            O2 = `Dissolved O2 (mL/L)`,
+            Salinity = `Salinity (PSU)`)
+
+dates <- Samptab_COI %>% 
+  filter(Project_name == "QU39") %>%
+  mutate(Sample_date = as_date(Sample_date)) %>%  
+  pull(Sample_date) %>% unique
+
+valid_drops <- drops %>% 
+  mutate(Sample_date = as_date(`Start time`)) %>% 
+  filter(Sample_date %in% dates,
+         `Target depth (m)` > 240) %>%
+  pull(`Cast PK`)
+
+CTD <- CTD %>% 
+  filter(CastPK %in% valid_drops) %>%
+```
+
+
+```{r}
+
+Temp <- CTD %>% 
+  mutate(Temp = Temperature) %>% 
+  plot_ocean(Temp)
+
+Salinity <- plot_ocean(CTD, Salinity, direction = -1)
+
+Flourescence <- CTD %>% 
+  filter(Chlorophyll < 25) %>% 
+  plot_ocean(Chlorophyll, option = "D")
+
+Turbidity <- CTD %>% 
+  filter(is.na(Turbidity) == FALSE) %>%
+  plot_ocean(Turbidity)
+
+O2 <- CTD %>% 
+  filter(is.na(O2) == FALSE) %>%
+  plot_ocean(O2)
+
+PAR <- CTD %>% 
+  filter(is.na(PAR) == FALSE) %>%
+  plot_ocean(PAR)
+
+
+
+
+ggarrange(Temp, Salinity, O2, ncol = 1)
+
+ggsave("./Figure_output/CTD_QU39.pdf", width = 7, height = 10)
+
+Temp
+
+```
+
+
+
+
+
+
+
+
+
+```{r}
+CTD %>% 
+  filter(CastPK %in% valid_drops,
+         year(Date)==2017,
+         Depth<50) %>% 
+  ggplot() +
+  geom_point(aes(Temperature, Depth), color = "red") +
+  geom_point(aes(Salinity, Depth), color = "blue") +
+  geom_point(aes(Chlorophyll, Depth), color = "green") +
+  scale_y_reverse() +
+  facet_wrap("Date") +
+  theme_minimal_grid()
+
+```
+
+
+
+
+
+
+
+
+
+

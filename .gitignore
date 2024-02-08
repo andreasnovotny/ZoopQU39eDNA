@@ -1,3 +1,9 @@
+#Data files
+Data_import/
+Data_output/
+Figure_output
+Workfolder/
+
 # History files
 .Rhistory
 .Rapp.history
