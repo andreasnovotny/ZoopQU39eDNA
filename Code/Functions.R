@@ -1,8 +1,13 @@
-# The following function will calculate relative abundance and the index of
-# relative abundance (RA_Index) for any data set. The RA_Index is identical to
-# eDNA Index, but as other data types than eDNA is used here, we choose to give
-# the index a more generic name. The functions are specific for the given
-# analysis workflow and are not meant to be exported.
+#'eDNA Index calculator
+#'
+#' @description
+#' The following function will calculate relative abundance and the index of
+#' relative abundance (RA_Index) for any data set. The RA_Index is identical to
+#' eDNA Index, but as other data types than eDNA is used here, we choose to give
+#' the index a more generic name. The functions are specific for the given
+#' analysis workflow and are not meant to be exported.
+#' 
+#' TODO: THis function still has to be generalized.
 
 collapseRAindex <- function(data, ...) {
   
@@ -218,3 +223,110 @@ plot_ocean <- function(Data, Parameter, option = "H", direction = 1) {
     scale_color_viridis(option = option, direction = direction) +
     theme_cowplot()
 }
+
+
+
+
+
+
+
+
+
+#' 2-dimensional data-interpolation with rolling means
+#' @description
+#' Two step interpolation of one dependent variable over two explanatory
+#' variables, with the possibility of rolling mean of first variable.
+#' 
+#' @author Andreas Novotny
+#' @param data A data frame or tibble
+#' @param x1 Variable name of the first explanatory variable
+#' @param x2 Variable name of the second explanatory variable
+#' @param y the dependent variable to be interpolated
+#' @param x1res (integer) the resolution of interpolation along x1
+#' @param x2res (integer)the resolution of interpolation along x2
+#' @param k (integer) the frame of rolling mean along x1. Default is 1, no rolling mean.
+#' @param 2dim (default TRUE). If false, only interpolation along x1.
+#' @return A data frame containing variables X1, x2, and y
+#' @examples 
+#' CTD %>% 
+#'  interpolate_2D(x1 = Depth, x2 = Date, y = Temperature, 1, 1) %>% 
+#'  ggplot(aes(x = Depth, y = Date)) +
+#'  geom_point(aes(colour = Temperature)) +
+#'  scale_y_reverse()
+#'  
+#' @export
+
+interpolate_rollmean <- function(data, x1, x2, y,
+                                 x1res, x2res,
+                                 k = 1, dim = 2) {
+  
+  # First level interpolation of x1 parameter
+  interpolate_x1 <- function(x1_target, x2_target) {
+    data_filt <- data %>% 
+      filter(x2 == x2_target) %>%
+      arrange(x1)
+    
+    approx(data_filt$x1, data_filt$y, xout = x1_target)$y
+  } # END interpolate_x1 function
+  
+  # Second level interpolation of x2 parameter
+  interpolate_x2 <- function(x1_target, x2_target) {
+    data_filt <- interp_x1 %>% 
+      dplyr::filter(x1 == x1_target) %>%
+      arrange(x2)
+    
+    approx(data_filt$x2, data_filt$y, xout = x2_target, na.rm = TRUE)$y
+  } # END interpolate_x2 function
+  
+  # Generalize datasets
+  data <- data %>% 
+    transmute(x1 = {{x1}}, x2 = {{x2}}, y = {{y}})
+  
+  # Execute first interpolation along x1
+  interp_x1 <-
+    crossing(
+      tibble(x1 = seq(min(data$x1), max(data$x1), by = x1res)),
+      tibble(x2 = unique(data$x2))) %>% 
+    group_by(x2) %>% 
+    mutate(y = interpolate_x1(x1, x2[1])) %>% 
+    filter(is.na(y) == FALSE) %>% 
+    group_by(x1) %>% 
+    filter(length(x1)>1) %>%
+    #RollingMean starts here:
+    group_by(x2) %>% 
+    mutate(y = zoo::rollmean(y, k = k, fill = NA)) %>% 
+    ungroup() %>% 
+    filter(is.na(y) == FALSE)
+  
+  if (dim == 1) {
+    
+    out <- interp_x1 %>% 
+      transmute("{{x1}}" := x1,
+                "{{x2}}" := x2,
+                "{{y}}" := y)
+    return(out)
+    
+    }
+  if (dim == 2) {
+    interp_x2 <-
+      crossing(
+        tibble(x2 = seq(min(interp_x1$x2), max(interp_x1$x2), by = x2res)),
+        tibble(x1 = unique(interp_x1$x1))) %>%
+      group_by(x1) %>%
+      mutate(y = interpolate_x2(x1[1], x2))
+    
+    out <- interp_x2 %>% 
+      transmute("{{x1}}" := x1,
+                "{{x2}}" := x2,
+                "{{y}}" := y)
+    return(out)
+  }
+}
+
+
+
+
+
+
+
+
