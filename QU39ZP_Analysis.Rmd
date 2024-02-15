@@ -410,7 +410,7 @@ Interp_Species %>%
   #scale_y_reverse() +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
   #scale_fill_viridis(option = "H") +
-  scale_fill_gradient2(high = 'darkgreen',
+  scale_fill_gradient2(high = 'green',
                        low = "white") +
   theme_minimal_vgrid(font_size = 8) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
@@ -443,23 +443,7 @@ Interp_Species %>%
   
   ggsave("./Figure_output/COI_Interpolation_lines.pdf")
   
-  
-Bottle_File %>% 
-  pivot_longer(5:15, names_to = "Variable", values_to = "value") %>% 
-  dplyr::filter(is.na(value) == F) %>% 
-  ggplot() +
-  geom_line(aes(Date, value, color = depth)) +
-  facet_wrap("Variable", scales = "free", ncol =3) +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 10) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        #strip.text = element_text(face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4) +
-  scale_color_manual(values = depth_colors)
 
-Bottle_File %>% 
 ```
 
 
@@ -528,7 +512,7 @@ ggsave("./Figure_output/Bottle_Data.pdf")
 Abundant_Species <- COI_species %>% 
   group_by(Taxa) %>%
   mutate(maxRA = median(RA)) %>%
-  filter(max(RA) >0.02) %>% # 32 species
+  filter(max(RA) >0.1) %>% # 32 species
   pull(Taxa) %>%  unique
 Abundant_Species
 

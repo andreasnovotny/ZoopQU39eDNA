@@ -103,7 +103,7 @@ plot_bottle <- function(Variable_filter, datemark) {
                             color = "red", size = 0.4)) +
   facet_wrap("Variable", scales = "free", ncol = 1) +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 10) +
+  theme_minimal_vgrid(font_size = 12) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         #strip.text = element_text(face = "italic"),
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
@@ -117,36 +117,63 @@ plot_bottle <- function(Variable_filter, datemark) {
 # 2. Community Data
 
 # Make species interpolation:
-interpolate_taxa <- function(Abundant_Species) {
+interpolate_taxa <- function(Abundant_Species, float) {
   
   COI_species %>%
   filter(Taxa %in% Abundant_Species) %>%
   group_by(Taxa) %>%
   group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
                                      # res 
-                                     x1res = 1, x2res = 1, k = 14,
+                                     x1res = 1, x2res = 1, k = float,
                                      dim = 1))
 }
 
 
-taxa_plot <- function(interpolated_taxa, datemark) {
-  interpolated_taxa %>%
-  mutate(Depth = factor(Depth)) %>%
-  ggplot() +
-  geom_line(aes(Date, RA_Index, color = Depth)) +
-  geom_vline(xintercept = c(date("2017-01-01") + days(datemark-1),
-                            date("2017-01-01") + days(datemark-1+365),
-                            date("2017-01-01") + days(datemark-1+365+365),
-                            color = "red", size = 0.4)) +
-  facet_wrap("Taxa", scales = "free") +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 10) +
+taxa_plot <- function(interpolated_taxa, datemark, type) {
+  
+  if (type == "Line") {
+    interpolated_taxa %>%
+      mutate(Depth = factor(Depth)) %>%
+      ggplot() +
+      geom_line(aes(Date, RA_Index, color = Depth)) +
+      geom_vline(xintercept = c(date("2017-01-01") + days(datemark-1),
+                                date("2017-01-01") + days(datemark-1+365),
+                                date("2017-01-01") + days(datemark-1+365+365),
+                                color = "red", size = 0.4)) +
+      facet_wrap("Taxa", scales = "free") +
+      scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+      theme_minimal_vgrid(font_size = 12) +
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+            panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+            aspect.ratio = 1/4) +
+      scale_color_manual(values = depth_colors)
+  } else {
+    
+    interpolated_taxa %>%
+      mutate(Depth = factor(Depth, levels = c(
+        250, 100, 30, 5, 0 ))) %>% 
+      ggplot() +
+      geom_raster(aes(Date, Depth, fill = RA_Index)) +
+      geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+      geom_vline(xintercept = c(date("2017-01-01") + days(datemark-1),
+                                date("2017-01-01") + days(datemark-1+365),
+                                date("2017-01-01") + days(datemark-1+365+365),
+                                color = "red", size = 0.4)) +
+      facet_wrap("Taxa") +
+      scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  scale_fill_gradient2(high = 'green',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 12) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        #strip.text = element_text(face = "italic"),
+        strip.text = element_text(face = "italic"),
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
         #legend.position="none",,
-        aspect.ratio = 1/4) +
-  scale_color_manual(values = depth_colors)
+        aspect.ratio = 1/4)
+    
+    
+    
+  }
+
 }
 
 
@@ -172,7 +199,7 @@ selectInput(
 
 selectInput(
   "Filt_var2",
-  NULL,,
+  NULL,
   choices = var_choices,
   selected = "Salinity"
 )
@@ -181,7 +208,7 @@ selectInput(
   "Filt_var3",
   NULL,
   choices = var_choices,
-  selected = "02"
+  selected = "O2"
 )
 ```
 
@@ -209,7 +236,7 @@ selectInput(
 )
 ```
 
-**Highlight one date:**
+**Day of year highlight:**
 ```{r}
 sliderInput(
   "doy_mark",
@@ -222,7 +249,7 @@ sliderInput(
 ```
 
 
-**Chose taxonomic projection:**
+**Projection type (taxa):**
 ```{r}
 # Line line or raster:
 radioButtons(
@@ -231,12 +258,23 @@ radioButtons(
   choices = c("Line", "Raster"),
   selected = "Line"
 )
+```
 
-# 1D or 2D interpolation
+**Frame for floating average (taxa)**
+```{r}
+numericInput(
+  "Floating_mean:",
+  "Days:",
+  14,
+  min = 1,
+  max = 365,
+  step = 1
+)
 ```
 
 
 
+##### About
 
 Built buy **Andreas Novotny** for the **Pelagic Ecosystems Lab** at the **University of British Columbia** and the **Hakai Institute**
 
@@ -266,8 +304,8 @@ Column
 ```{r}
 
 renderPlot({
-  int <- interpolate_taxa(input$Filt_Taxa1)
-  taxa_plot(int, input$doy_mark)
+  int <- interpolate_taxa(input$Filt_Taxa1, input$Floating_mean)
+  taxa_plot(int, input$doy_mark, input$Plottype)
 })
 
 ```
@@ -276,8 +314,8 @@ renderPlot({
 ```{r}
 
 renderPlot({
-  int <- interpolate_taxa(input$Filt_Taxa2)
-  taxa_plot(int, input$doy_mark)
+  int <- interpolate_taxa(input$Filt_Taxa2, input$Floating_mean)
+  taxa_plot(int, input$doy_mark, input$Plottype)
 })
 
 ```
@@ -286,16 +324,177 @@ renderPlot({
 ```{r}
 
 renderPlot({
-  int <- interpolate_taxa(input$Filt_Taxa3)
-  taxa_plot(int, input$doy_mark)
+  int <- interpolate_taxa(input$Filt_Taxa3, input$Floating_mean)
+  taxa_plot(int, input$doy_mark, input$Plottype)
 })
 
 ```
 
 
 
-Community analysis
+Community Analysis
 =======================================================================
+
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+**CCA**
+
+Constrained correspondence analysis. VIF stepwise reduction of envorinmental vaciables has been used to determine what autocorrelation between variables.
+
+**NMDS**
+
+NMDS of samples only (COI Libraries). Select depths to be included in NMDS:
+
+```{r}
+checkboxGroupInput(
+  "Filter_depth",
+  NULL,
+  choices = c("0", "5", "30", "100", "250"),
+  selected = c("0", "5", "30", "100", "250"),
+  inline = FALSE,
+  width = NULL,
+  choiceNames = NULL,
+  choiceValues = NULL
+)
+```
+
+##### About
+
+Built buy **Andreas Novotny** for the **Pelagic Ecosystems Lab** at the **University of British Columbia** and the **Hakai Institute**
+
+**Contact:** a.novotny@oceans.ubc.ca
+
+
+Column {.tabset}
+-------------------------------------
+### CCA
+
+```{r}
+plot_cca <- function(maxRA) {
+  
+  Abundant_Species <- COI_species %>% 
+  group_by(Taxa) %>%
+  mutate(maxRA = median(RA)) %>%
+  filter(max(RA) >maxRA) %>% # 32 species
+  pull(Taxa) %>%  unique
+
+comm <- COI_species %>% 
+  filter(Taxa %in% Abundant_Species) %>% 
+  dplyr::group_by(Hakai_ID, Taxa) %>% 
+  summarise(Index = mean(RA_Index)) %>%
+  pivot_wider(names_from = "Taxa", values_from = "Index") %>% 
+  arrange(Hakai_ID) %>% 
+  column_to_rownames("Hakai_ID")
+
+env <- bottle_file %>% 
+  arrange(hakai_id) %>%
+  mutate(Depth = factor(line_out_depth),
+         Month = month(date)) %>%
+  column_to_rownames("hakai_id")
+
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             chla_20um + chla_3um +`chla_GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+
+
+#extracting the data as data frame; env data
+veg_1 = as.data.frame(mod$CCA$biplot) %>% 
+  rownames_to_column("env")
+
+#extracting the data; genusv
+veg_2 = as.data.frame(mod$CCA$v) %>%
+  rownames_to_column("Taxa")
+
+cca_plot <-  ggplot() +
+  geom_point(data = veg_2, aes(x = CCA1, y = CCA2), color = "red") +
+  #geom_point(data = veg_1, aes(x = CCA1, y = CCA2), color = "blue") +
+  ggrepel::geom_text_repel(data = veg_2,
+                           aes(x = CCA1, y = CCA2, label = Taxa),
+                           nudge_y = -0.05, size = 1.5) +
+
+  geom_segment(data = veg_1,
+               aes(x = 0, y = 0, xend = CCA1, yend = CCA2),
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(data = veg_1,
+                           aes(x = CCA1, y = CCA2, label = env),
+                           nudge_y = -0.05,
+                           color = "blue", size = 2) +
+  theme_bw()
+
+cca_plot
+}
+
+
+plot_cca(0.08)
+
+```
+
+
+### NMDS
+
+
+```{r}
+## WRAPPER
+plotNMDS <- function(x) {
+  
+
+mat <- COI_species %>%
+  mutate(Depth = factor(Depth)) %>% 
+  dplyr::filter(Depth %in% x) %>% 
+  dplyr::select(Library_ID, Taxa, RA_Index) %>% 
+  pivot_wider(names_from = Taxa, values_from = RA_Index) %>% 
+  column_to_rownames("Library_ID") %>% 
+  as.matrix()
+  
+  mat
+  
+mod <- metaMDS(mat, trymax = 20)
+
+# Extract NMDS data
+{  Samples <- 
+    scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column("Library_ID") %>% 
+    mutate(Layer = "Samples")
+  
+  Taxa <-
+    scores(mod)$species %>% 
+    as.data.frame() %>%
+    rownames_to_column("Taxa") %>% 
+    mutate(Layer = "Taxa")
+  
+  NMDS_res <- bind_rows(Samples, Taxa) %>% 
+    pivot_wider(names_from = Layer,
+              values_from = c(NMDS1, NMDS2))
+}
+
+# Merge with metadata
+COI_species %>% 
+  dplyr::select(Date, Depth, Library_ID) %>%
+  mutate(Month = format(as.Date(Date), format="%m"),
+         Depth = factor(Depth)) %>%
+  left_join(NMDS_res, by = "Library_ID") %>% 
+  ggplot(aes(NMDS1_Samples, NMDS2_Samples)) +
+  geom_text(aes(NMDS1_Taxa, NMDS2_Taxa, label = Taxa),
+            size = 3, colour = "grey", fontface = "italic") +
+  geom_point(aes(color = Month, shape = Depth), size = 3) +
+  scale_color_manual(values = seasonal_colors)
+
+
+}
+
+
+renderPlot({
+  plotNMDS(input$Filter_depth)
+})
+
+```
+
 
 
 Diagnostic
@@ -304,11 +503,26 @@ Diagnostic
 Inputs {.sidebar}
 -----------------------------------------------------------------------
 
+**Relative Abundance**
+
+Plotting all taxa identified with COI eDNA. Ordered by their relative sequence read abundance.
+
+**Library coverage**
+
+Successful COI libraries and their distributions over depth / date.
 
 
-Column
------------------------------------------------------------------------
+##### About
+
+Built buy **Andreas Novotny** for the **Pelagic Ecosystems Lab** at the **University of British Columbia** and the **Hakai Institute**
+
+**Contact:** a.novotny@oceans.ubc.ca
+
+Column {.tabset}
+-------------------------------------
 ### Relative abundance
+
+
 
 ```{r}
 COI_species %>%
@@ -328,6 +542,8 @@ COI_species %>%
 
 
 ### Library coverage
+
+
 
 ```{r}
 COI_species %>% 
