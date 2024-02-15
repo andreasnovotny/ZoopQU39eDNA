@@ -1,0 +1,356 @@
+---
+title: "QU39 Time Series"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    source_code: embed
+    orientation: columns
+    vertical_layout: fill
+    theme: simplex
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+#Load necessary packages and import functions.
+
+# All data format modifications and filtering and plotting
+library(tidyverse)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+source("Code/Functions.R")
+library(zoo)
+
+# Statistical tools
+library(vegan)
+
+# Specific plotting tools
+library(plotly)
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+source("Code/scales_and_themes.R")
+#library(ggnewscale)
+
+
+
+
+bottle_file <- readRDS("Data_output/bottle_file.rds")
+COI_species <- readRDS("Data_output/COI_species.rds")
+
+
+Abundant_Species <- COI_species %>% 
+  group_by(Taxa) %>%
+  mutate(maxRA = median(RA)) %>%
+  #filter(maxRA >= 0.01) %>% # 15 species
+  #filter(max(RA) >0.14) %>% # 15 species
+  filter(max(RA) >0.24) %>% # 10 Species
+  pull(Taxa) %>%  unique
+```
+
+
+
+
+
+Explore Data
+=======================================================================
+
+```{r}
+##### SERVER #############
+
+# 1. Environmental Data
+
+var_choices = c(
+    "Temperature", "Salinity",
+    "chlA (>20um)", "chlA (>3um)", "chlA (>0.7um)",
+    "phaeo (>20um)", "phaeo (>3um)", "phaeo (>0.7um)",
+    "NO2 & NO3", "PO4",
+    "O2", "PAR", "Turbidity")
+
+Bottle_File <- bottle_file %>% 
+  dplyr::transmute(Hakai_ID = hakai_id,
+                   Date = date,
+                   Depth = line_out_depth,
+                   depth = factor(line_out_depth, levels = c("260", "100",
+                                                             "30", "5", "0")),
+                   Temperature = Temperature,
+                   Salinity = Salinity,
+                   PAR = PAR,
+                   Turbidity = Turbidity,
+                   O2 = O2,
+                   `chlA (>20um)` = chla_20um,
+                   `chlA (>3um)` = chla_3um,
+                   `chlA (>0.7um)` = `chla_GF/F`,
+                   `phaeo (>20um)` = phaeo_20um,
+                   `phaeo (>3um)` = phaeo_3um,
+                   `phaeo (>0.7um)` = `phaeo_GF/F`,
+                   `NO2 & NO3` =  no2_no3_um,
+                   PO4 = po4
+                   ) %>% 
+  pivot_longer(5:15, names_to = "Variable", values_to = "value") %>% 
+  dplyr::filter(is.na(value) == F) %>% 
+  dplyr::mutate(Variable = factor(Variable, levels = var_choices))
+
+plot_bottle <- function(Variable_filter, datemark) {
+  
+  Bottle_File %>%
+  dplyr::filter(Variable %in% Variable_filter) %>% 
+  ggplot() +
+  geom_line(aes(Date, value, color = depth)) +
+  geom_vline(xintercept = c(date("2017-01-01") + days(datemark-1),
+                            date("2017-01-01") + days(datemark-1+365),
+                            date("2017-01-01") + days(datemark-1+365+365),
+                            color = "red", size = 0.4)) +
+  facet_wrap("Variable", scales = "free", ncol = 1) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+  
+}
+
+
+# 2. Community Data
+
+# Make species interpolation:
+interpolate_taxa <- function(Abundant_Species) {
+  
+  COI_species %>%
+  filter(Taxa %in% Abundant_Species) %>%
+  group_by(Taxa) %>%
+  group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
+                                     # res 
+                                     x1res = 1, x2res = 1, k = 14,
+                                     dim = 1))
+}
+
+
+taxa_plot <- function(interpolated_taxa, datemark) {
+  interpolated_taxa %>%
+  mutate(Depth = factor(Depth)) %>%
+  ggplot() +
+  geom_line(aes(Date, RA_Index, color = Depth)) +
+  geom_vline(xintercept = c(date("2017-01-01") + days(datemark-1),
+                            date("2017-01-01") + days(datemark-1+365),
+                            date("2017-01-01") + days(datemark-1+365+365),
+                            color = "red", size = 0.4)) +
+  facet_wrap("Taxa", scales = "free") +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+}
+
+
+all_species <- COI_species %>% 
+  pull(Taxa) %>% unique()
+
+
+
+
+```
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+**Select 3 environmental environmental variables:**
+```{r}
+selectInput(
+  "Filt_var1",
+  NULL,
+  choices = var_choices,
+  selected = "Temperature"
+)
+
+selectInput(
+  "Filt_var2",
+  NULL,,
+  choices = var_choices,
+  selected = "Salinity"
+)
+
+selectInput(
+  "Filt_var3",
+  NULL,
+  choices = var_choices,
+  selected = "02"
+)
+```
+
+**Select 3 taxa:**
+```{r}
+selectInput(
+  "Filt_Taxa1",
+  NULL,
+  choices = all_species,
+  selected = "Acartia longiremis"
+)
+
+selectInput(
+  "Filt_Taxa2",
+  NULL,
+  choices = all_species,
+  selected = "Eucalanus bungii"
+)
+
+selectInput(
+  "Filt_Taxa3",
+  NULL,
+  choices = all_species,
+  selected = "Pseudocalanus mimus"
+)
+```
+
+**Highlight one date:**
+```{r}
+sliderInput(
+  "doy_mark",
+  NULL,
+  min = 1,
+  max = 365,
+  value = 1,
+  step = 1
+)
+```
+
+
+**Chose taxonomic projection:**
+```{r}
+# Line line or raster:
+radioButtons(
+  "Plottype",
+  NULL,
+  choices = c("Line", "Raster"),
+  selected = "Line"
+)
+
+# 1D or 2D interpolation
+```
+
+
+
+
+Built buy **Andreas Novotny** for the **Pelagic Ecosystems Lab** at the **University of British Columbia** and the **Hakai Institute**
+
+**Contact:** a.novotny@oceans.ubc.ca
+
+
+Column
+-----------------------------------------------------------------------
+### Environmental Variable 1
+```{r}
+renderPlot(plot_bottle(input$Filt_var1, input$doy_mark))
+```
+
+### Environmental Variable 2
+```{r}
+renderPlot(plot_bottle(input$Filt_var2, input$doy_mark))
+```
+
+### Environmental Variable 3
+```{r}
+renderPlot(plot_bottle(input$Filt_var3, input$doy_mark))
+```
+
+Column
+-----------------------------------------------------------------------
+### Taxa 1
+```{r}
+
+renderPlot({
+  int <- interpolate_taxa(input$Filt_Taxa1)
+  taxa_plot(int, input$doy_mark)
+})
+
+```
+
+### Taxa 2
+```{r}
+
+renderPlot({
+  int <- interpolate_taxa(input$Filt_Taxa2)
+  taxa_plot(int, input$doy_mark)
+})
+
+```
+
+### Taxa 3
+```{r}
+
+renderPlot({
+  int <- interpolate_taxa(input$Filt_Taxa3)
+  taxa_plot(int, input$doy_mark)
+})
+
+```
+
+
+
+Community analysis
+=======================================================================
+
+
+Diagnostic
+=======================================================================
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+
+
+Column
+-----------------------------------------------------------------------
+### Relative abundance
+
+```{r}
+COI_species %>%
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  mutate(maxRA = median(RA)) %>%
+  ungroup() %>% 
+  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
+  ggplot() +
+  geom_boxplot(aes(Taxa, RA)) +
+  theme_minimal_hgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
+                                   face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
+  scale_y_continuous(trans='log10')
+```
+
+
+### Library coverage
+
+```{r}
+COI_species %>% 
+  group_by(Library_ID, Depth, Date) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  mutate(Depth = factor(Depth, levels = c(
+    250, 100, 30, 5, 0
+  ))) %>% 
+  ggplot() +
+  geom_raster(aes(Date, Depth)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_gradient2(high = '#4daf4a') +
+  theme_minimal_vgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        aspect.ratio = 1/4)
+
+
+```
+
+
+About
+=======================================================================
+
