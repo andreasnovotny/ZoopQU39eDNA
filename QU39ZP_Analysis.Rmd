@@ -31,6 +31,7 @@ library(paletteer)
 library(viridis)
 library(cowplot)
 #library(ggnewscale)
+source("Code/scales_and_themes.R")
 
 # Make sure tidyverse is the latest loaded package
 detach("package:tidyverse", unload=TRUE)
@@ -52,9 +53,9 @@ update_Contributed_data()
 
 ```
 
-# 1. Read and combine sequence data sets
+# ### DATA PREP. ###
 
-## Data components
+# 1. eDNA Data components
 
 The COI Sequencing data are downloaded in the compact format with a separate ASV, Taxonomy, and Sample Data table. The data tables are read separately and then merged into a tidy data tibble, resembling the data format of most zooplankton count data sets.
 
@@ -100,7 +101,7 @@ personel %>%
   arrange(-Samples_Extracted)
 ```
 
-## List contributions for QU39 microbial:
+List contributions for QU39 microbial:
 
 ```{r}
 
@@ -162,47 +163,6 @@ df_12S <-
 ```
 
 
-
-## Defining metazoan phyla
-
-Specifying global filtering parameter: What phyla are present in metazoa?
-
-```{r}
-metazoa <- c("Arthropoda",
-             "Cnidaria",
-             "Chaetognatha",
-             "Annelida",
-             "Porifera",
-             "Echinodermata",
-             "Mollusca",
-             "Phoronida",
-             "Bryozoa",
-             "Nemertea",
-             "Ctenophora",
-             "Priapulida",
-             "Rotifera",
-             "Chordata",
-             "Platyhelminthes")
-
-# Define some date breaks:
-datebreaks <- c(
-  "2017-01-01", "2017-04-01", "2017-07-01", "2017-10-01",
-  "2018-01-01", "2018-04-01", "2018-07-01", "2018-10-01",
-  "2019-01-01", "2019-04-01", "2019-07-01", "2019-10-01") %>% as_date()
-yearbreaks <- c(
-  "2017-01-01", "2018-01-01", "2019-01-01") %>% as_date()
-
-
-seasonal_colors = c("#053061", "#3288BD", "#66C2A5", "#7FBC41",
-                    "#A6D96A", "#FEE08B", "#FDAE61", "#F46D43",
-                    "#D53E4F", "#9E0142", "#67001F", "#40004B")
-
-depth_colors = c("#60dd8e", "#3f9f7f", "#188a8d", "#17577e", "#141163")
-
-
-```
-
-
 ## Calculate eDNA Index and clean up datasetds
 
 In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
@@ -259,271 +219,18 @@ COI_species <- eDNA_COI_index_species %>%
   filter(sum(Abundance)>500)
 
 COI_species
-```
 
-# 2. Plot Index Profiles
-
-
-# Plot average relative abundance
-
-Genus level:
-
-
-Species level:
-```{r}
-COI_species %>%
-  filter(Abundance > 0) %>%
-  group_by(Taxa) %>% 
-  mutate(maxRA = median(RA)) %>%
-  ungroup() %>% 
-  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
-  ggplot() +
-  geom_boxplot(aes(Taxa, RA)) +
-  theme_minimal_hgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
-                                   face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
-  scale_y_continuous(trans='log10')
-
-Abundant_Species <- COI_species %>% 
-  group_by(Taxa) %>%
-  mutate(maxRA = median(RA)) %>%
-  #filter(maxRA >= 0.01) %>% # 15 species
-  filter(max(RA) >0.14) %>% # 15 species
-  #filter(max(RA) >0.24) %>% # 10 Species
-  pull(Taxa) %>%  unique
-Abundant_Species
-
-```
-
-# Plot library coverage
-```{r}
-COI_species %>% 
-  group_by(Library_ID, Depth, Date) %>% 
-  summarise(Abundance = sum(Abundance)) %>% 
-  mutate(Depth = factor(Depth, levels = c(
-    250, 100, 30, 5, 0
-  ))) %>% 
-  ggplot() +
-  geom_raster(aes(Date, Depth)) +
-  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
-  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  #scale_fill_gradient2(high = '#4daf4a') +
-  theme_minimal_vgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        aspect.ratio = 1/4)
-
-
+saveRDS(COI_species, "Data_output/COI_species.rds")
 ```
 
 
-## Interpolated profiles
-```{r}
-# Make species interpolation:
-Interp_Species <- COI_species %>%
-  filter(Taxa %in%Abundant_Species) %>%
-  group_by(Taxa) %>%
-  group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
-                                     # res 
-                                     x1res = 1, x2res = 1, k = 14,
-                                     dim = 1))
-
-# Plot dataset
-Interp_Species %>%
-  mutate(Depth = factor(Depth, levels = c(
-    250, 100, 30, 5, 0
-  ))) %>% 
-  ggplot() +
-  geom_raster(aes(Date, Depth, fill = RA_Index)) +
-  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
-  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
-  facet_wrap("Taxa", ncol = 2) +
-  #scale_y_reverse() +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  #scale_fill_viridis(option = "H") +
-  scale_fill_gradient2(high = 'darkgreen',
-                       low = "white") +
-  theme_minimal_vgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        strip.text = element_text(face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4)
-
-ggsave("./Figure_output/COI_Interpolation.pdf")
-
-```
-
-Plot without interpolation
-
-```{r}
-Interp_Species %>%
-  filter(Taxa %in% Abundant_Species) %>% 
-  mutate(Depth = factor(Depth)) %>%
-  ggplot() +
-  geom_line(aes(Date, RA_Index, color = Depth)) +
-  facet_wrap("Taxa", scales = "free", ncol =3) +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 10) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        #strip.text = element_text(face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4) +
-  scale_color_manual(values = depth_colors)
-  
-  
-  
-  
-bottle_file %>% 
-  pivot_longer(5:20, names_to = "Variable", values_to = "value") %>% 
-  dplyr::filter(is.na(value) == F) %>% 
-  mutate(Depth = factor(line_out_depth)) %>% 
-  ggplot() +
-  geom_line(aes(date, value, color = Depth)) +
-  facet_wrap("Variable", scales = "free", ncol =3) +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 10) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        #strip.text = element_text(face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4) +
-  scale_color_manual(values = depth_colors)
-```
-
-
-
-# 3. Environmental Data
-
-# Load and filter CTD data
-```{r}
-
-drops <- read_excel("./Data_import/CTD.xlsx", sheet = "Drops")
-CTD <- read_excel("./Data_import/CTD.xlsx", sheet = "Data") %>% 
-  transmute(CastPK = `Cast PK`,
-            Distance_from_station = `Distance from station`,
-            Station,
-            Time = `Measurement time`,
-            Date = as_date(Time), 
-            Depth = `Depth (m)`,
-            Conductivity = `Conductivity (mS/cm)`,
-            Temperature = `Temperature (deg C)`,
-            Pressure = `Pressure (dbar)`,
-            PAR = `PAR (umol m-2 s-1)`,
-            Chlorophyll = `Fluorometry Chlorophyll (ug/L)`,
-            Turbidity = `Turbidity (FTU)`,
-            O2 = `Dissolved O2 (mL/L)`,
-            Salinity = `Salinity (PSU)`)
-
-dates <- Samptab_COI %>% 
-  filter(Project_name == "QU39") %>%
-  mutate(Sample_date = as_date(Sample_date)) %>%  
-  pull(Sample_date) %>% unique
-
-valid_drops <- drops %>% 
-  mutate(Sample_date = as_date(`Start time`)) %>% 
-  filter(Sample_date %in% dates,
-         `Target depth (m)` > 240) %>%
-  pull(`Cast PK`)
-
-CTD <- CTD %>% 
-  filter(CastPK %in% valid_drops)
-```
-
-# Interpolate and plot:
-```{r}
-CTD_Interp <- CTD %>% 
-  pivot_longer(7:14, names_to = "Parameter", values_to = "value") %>%
-  filter(Parameter %in% c("Temperature", "Salinity")) %>% 
-  group_by(Parameter) %>%
-  group_modify(~interpolate_rollmean(.x, x1 = Depth, x2 = Date, y = value,
-                                     x1res = 1, x2res = 1)) %>%
-  filter(Depth < 250)
-
-# Plot dataset
-CTD_Interp  %>% 
-  ggplot() +
-  geom_point(aes(Date, Depth, color = value),
-             filter(CTD_Interp, Parameter %in% c("Temperature"))) +
-  scale_color_viridis(option = "H") +
-  
-  new_scale_color() +
-  geom_point(aes(Date, Depth, color = value),
-             filter(CTD_Interp, Parameter %in% c("Salinity")),) +
-  scale_color_viridis(option = "H", direction = -1) +
-  
-  
-  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
-  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
-  facet_wrap("Parameter", ncol = 1, scales = "free") +
-  
-  
-  scale_y_reverse() +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  theme_minimal_vgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        panel.background = element_rect(colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4)
-
-  geom_point(
-    aes(Date, y, color = RA_Index),
-    filter(data, y %in% c("Count")),
-    shape = 15) +
-  facet_wrap(facets = "Taxa", ncol = 3) +
-  scale_color_gradient2(high = '#fec44f',
-                       low = "white") +
-
-
-
-```
-
-
-# Chlorophyll data
-
-```{r}
-CHL <- read_excel("./Data_import/2023-12-21_112549_HakaiData_chlorophyll_15-20.xlsx", sheet = "Hakai Data")
-CHL
-
-
-CHL %>%
-  mutate(Date = as_date(date),
-         Depth = factor(line_out_depth)) %>% 
-  select(Date, Depth, filter_type, chla_final, phaeo_final) %>% 
-  filter(filter_type == "Bulk GF/F") %>% 
-  filter(Depth %in% c(0, 5, 30, 100)) %>% 
-  ggplot() +
-  geom_line(aes(Date, chla_final, color = Depth)) +
-  #facet_wrap("Depth") +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks)
-
-CHL %>%
-  mutate(Date = as_date(date),
-         Depth = factor(line_out_depth)) %>% 
-  select(Date, Depth, filter_type, chla_final, phaeo_final) %>% 
-  filter(filter_type == "Bulk GF/F") %>% 
-  filter(Depth %in% c(0, 5, 30, 100)) %>% 
-  ggplot() +
-  geom_line(aes(Date, phaeo_final, color = Depth)) +
-  #facet_wrap("Depth") +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks)
-```
-
-
-
-# 3. Make bottle file
-
-## Read and combine datasets
+# 2. Environmental Data components
 
 This is the list of Hakai_ID's we have COI data for: 
 ```{r}
 samples_COI <- COI_species %>% 
   pull(Hakai_ID) %>% 
   unique()
-samples_COI
 ```
 
 Extract Hakai Microbial metadata for samples
@@ -551,7 +258,6 @@ CHL <- read_excel("./Data_import/2023-12-21_112549_HakaiData_chlorophyll_15-20.x
   pivot_wider(names_from = filter_type, values_from = c(chla, phaeo))
 CHL
 ```
-
 
 Nutrient bottle data
 ```{r}
@@ -621,19 +327,128 @@ bottle_file <- niskin %>%
   left_join(CHL, by = "NISKIN") %>% 
   left_join(NUT, by = "NISKIN") %>% 
   left_join(ctd_bottle, by = c("date", "line_out_depth"))
+
+saveRDS(bottle_file, "Data_output/bottle_file.rds")
+```
+
+# ### PLOTS & STATS ###
+
+# 1. Diagnostic plots
+
+## Average relative abundace
+Species level:
+```{r}
+COI_species %>%
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  mutate(maxRA = median(RA)) %>%
+  ungroup() %>% 
+  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
+  ggplot() +
+  geom_boxplot(aes(Taxa, RA)) +
+  theme_minimal_hgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
+                                   face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
+  scale_y_continuous(trans='log10')
+
+Abundant_Species <- COI_species %>% 
+  group_by(Taxa) %>%
+  mutate(maxRA = median(RA)) %>%
+  #filter(maxRA >= 0.01) %>% # 15 species
+  #filter(max(RA) >0.14) %>% # 15 species
+  filter(max(RA) >0.24) %>% # 10 Species
+  pull(Taxa) %>%  unique
+Abundant_Species
+
+```
+
+## Library coverage
+```{r}
+COI_species %>% 
+  group_by(Library_ID, Depth, Date) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  mutate(Depth = factor(Depth, levels = c(
+    250, 100, 30, 5, 0
+  ))) %>% 
+  ggplot() +
+  geom_raster(aes(Date, Depth)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_gradient2(high = '#4daf4a') +
+  theme_minimal_vgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        aspect.ratio = 1/4)
+
+
 ```
 
 
-## Plot bottle data:
+## eDNA profiles
+```{r}
+# Make species interpolation:
+Interp_Species <- COI_species %>%
+  filter(Taxa %in%Abundant_Species) %>%
+  group_by(Taxa) %>%
+  group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
+                                     # res 
+                                     x1res = 1, x2res = 1, k = 14,
+                                     dim = 1))
 
+# Plot dataset
+Interp_Species %>%
+  mutate(Depth = factor(Depth, levels = c(
+    250, 100, 30, 5, 0
+  ))) %>% 
+  ggplot() +
+  geom_raster(aes(Date, Depth, fill = RA_Index)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  facet_wrap("Taxa", ncol = 2) +
+  #scale_y_reverse() +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_viridis(option = "H") +
+  scale_fill_gradient2(high = 'darkgreen',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4)
+
+ggsave("./Figure_output/COI_Interpolation.pdf")
+
+```
+
+Plot lines instead
 
 ```{r}
-bottle_file %>% 
-  pivot_longer(5:20, names_to = "Variable", values_to = "value") %>% 
-  dplyr::filter(is.na(value) == F) %>% 
-  mutate(Depth = factor(line_out_depth)) %>% 
+Interp_Species %>%
+  filter(Taxa %in% Abundant_Species) %>% 
+  mutate(Depth = factor(Depth)) %>%
   ggplot() +
-  geom_line(aes(date, value, color = Depth)) +
+  geom_line(aes(Date, RA_Index, color = Depth)) +
+  facet_wrap("Taxa", scales = "free", ncol = 2) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+  
+  ggsave("./Figure_output/COI_Interpolation_lines.pdf")
+  
+  
+Bottle_File %>% 
+  pivot_longer(5:15, names_to = "Variable", values_to = "value") %>% 
+  dplyr::filter(is.na(value) == F) %>% 
+  ggplot() +
+  geom_line(aes(Date, value, color = depth)) +
   facet_wrap("Variable", scales = "free", ncol =3) +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
   theme_minimal_vgrid(font_size = 10) +
@@ -644,10 +459,68 @@ bottle_file %>%
         aspect.ratio = 1/4) +
   scale_color_manual(values = depth_colors)
 
+Bottle_File %>% 
 ```
 
 
-# 4. Community analysis:
+
+# 2. Environmental Data
+
+## Bottle data:
+
+```{r}
+Bottle_File <- bottle_file %>% 
+  dplyr::transmute(Hakai_ID = hakai_id,
+                   Date = date,
+                   Depth = line_out_depth,
+                   depth = factor(line_out_depth, levels = c("260", "100",
+                                                             "30", "5", "0")),
+                   Temperature = Temperature,
+                   Salinity = Salinity,
+                   PAR = PAR,
+                   Turbidity = Turbidity,
+                   O2 = O2,
+                   `chlA (>20um)` = chla_20um,
+                   `chlA (>3um)` = chla_3um,
+                   `chlA (>0.7um)` = `chla_GF/F`,
+                   `phaeo (>20um)` = phaeo_20um,
+                   `phaeo (>20um)` = phaeo_3um,
+                   `phaeo (>20um)` = `phaeo_GF/F`,
+                   `NO2 & NO3` =  no2_no3_um,
+                   PO4 = po4
+                   ) %>% 
+  pivot_longer(5:15, names_to = "Variable", values_to = "value") %>% 
+  dplyr::filter(is.na(value) == F) %>% 
+  dplyr::mutate(Variable = factor(Variable, levels = c(
+    "Temperature", "Salinity",
+    "chlA (>20um)", "chlA (>3um)", "chlA (>0.7um)",
+    "phaeo (>20um)", "phaeo (>3um)", "phaeo (>0.7um)",
+    "NO2 & NO3", "PO4",
+    "O2", "PAR", "Turbidity")))
+Bottle_File
+
+
+
+Bottle_File %>%
+  filter() %>% 
+  ggplot() +
+  geom_line(aes(Date, value, color = depth)) +
+  facet_wrap("Variable", scales = "free", ncol = 2) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+
+ggsave("./Figure_output/Bottle_Data.pdf")
+
+```
+
+
+# 3. Community analysis:
 
 ## CCA
 
@@ -833,7 +706,6 @@ plot
 
 
 
-
 ## NMDS
 
 ```{r}
@@ -903,57 +775,6 @@ plotNMDS(250)
 
 
 
-
-
-
-```{r}
-# Combined community matrix
-  mat <- wide %>% 
-    mutate(Sample = paste(Date, Method, sep = "_")) %>%
-    select(!1:2) %>% 
-    column_to_rownames("Sample") %>% 
-    as.matrix()
-  
-  # Execute permanova
-  permanova <- adonis2(mat ~ Method+Date,
-                       data = mutate(wide, Date = format(as.Date(Date),
-                                                         format="%m")),
-                       permutations = 999, method="bray")
-  
-  # Execute NMDS
-  mod <- metaMDS(mat, trymax = 100)
-  NMDS_scores(mod) 
-  
-
-  
-  
-  
-NMDS_res
-```
-
-
-
-
-
-```{r}
-NMDS_scores <- function(mod) {
-    Samples <- 
-    scores(mod)$sites %>% 
-    as.data.frame() %>%
-    rownames_to_column("Name") %>% 
-    separate(Name, into = c("Date", "Method"), sep = "_") %>% 
-    mutate(Layer = "Samples")
-
-  Taxa <-
-    scores(mod)$species %>% 
-    as.data.frame() %>%
-    rownames_to_column("Taxa") %>% 
-    mutate(Layer = "Taxa")
-
-  bind_rows(Samples, Taxa)
-  } # End NMDS Scores
-  
-```
 
 
 
