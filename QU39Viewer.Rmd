@@ -497,6 +497,68 @@ renderPlot({
 
 
 
+Correlation plots
+=======================================================================
+
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+selectInput(
+  "Environmental_exp",
+  NULL,
+  choices = var_choices,
+  selected = "Temperature"
+)
+
+selectInput(
+  "Taxa_Dep",
+  NULL,
+  choices = all_species,
+  selected = "Acartia longiremis"
+)
+
+
+
+sliderInput(
+  "DOYshift",
+  NULL,
+  min = -365,
+  max = +365,
+  value = 0,
+  step = 1
+)
+
+```
+
+
+
+
+##### About
+
+Built buy **Andreas Novotny** for the **Pelagic Ecosystems Lab** at the **University of British Columbia** and the **Hakai Institute**
+
+**Contact:** a.novotny@oceans.ubc.ca
+
+
+Column {.tabset}
+-------------------------------------
+### Taxa ~ Environment
+
+
+
+
+
+### Taxa ~ Taxa
+
+
+
+
+
+
+
+
 Diagnostic
 =======================================================================
 
