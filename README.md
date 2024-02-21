@@ -18,7 +18,7 @@ This public directory does **not** contain any data. It contains code for retrie
 
 -   All data modifications, plotting and analysis is done in, **QU39ZP_Analysis.Rmd**.
 
--   **QU39Viewer.Rmd** provides a shiny-dashboard for some visualization.
+-   **QU39Viewer.Rmd** provides a shiny-dashboard for some visualization. The app is currently active at: <https://novotny.shinyapps.io/QU39Viewer>
 
 -   The **Code** directory contains functions and scripts imported by the above notebooks.
 
