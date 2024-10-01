@@ -1,0 +1,438 @@
+---
+title: "Inspect prepare and combine datasets"
+---
+
+# 0. About
+
+**Andreas Novotny 2024**
+
+This script is ment to merge the metabarcoding data from several different MiSeq runs, using several different marker genes, and combine it with its sample metadata. To prepare we load libraries and copy all ASV tables, taxonomy tables, and metadata from the AmpliconSeqAnalysis directory. In the Amplicon Seq analysis directory, raw FASTQ sequences has already been demultiplexed, quality filtered, and annotated to taxonomic databases. For details, see separate documentation.\
+
+```{r}
+library(lubridate)
+library(tidyverse)
+library(readxl)
+library(googledrive)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+```
+
+Copy MiSeq data from AmpliconSeqAnalysis project:
+
+```{r}
+system2("cp", args = c(
+  "-r",
+  "../AmpliconSeqAnalysis/ProcessedData/*",
+  "Data_import/"
+))
+```
+
+# 1. Sample Metadata
+
+*In this section, metadata from the various raw sources will be red and combined.*
+
+## COI metadata
+
+Reading in in COI metadata:
+
+```{r}
+Samptab_COI_all <-read_excel("Data_import/metadata_files/Library_metadata_all.xlsx", 
+        sheet = "COI", col_types = c("text", "text",
+        "text", "date", "text", "text", "text", 
+        "text", "date", "date", "numeric", 
+        "text", "date", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "date", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "numeric", "numeric", "text"), na = "<NA>") %>% 
+  select(!Quality_log)
+Samptab_COI_all
+write_csv2(Samptab_COI_all, "Data_import/metadata_files/sample_data_COI_all.csv")
+```
+
+## 18S metadata
+
+Reading in 18S metadata from this specific project:
+
+```{r}
+Library_metadata_Andreas <- read_excel("Data_import/metadata_files/Library_metadata_all.xlsx",
+     sheet = "18S", col_types = c("text", "text",
+         "text", "date", "text", "text", "text", 
+         "text", "date", "date", "numeric", 
+         "text", "date", "text", "numeric", 
+         "numeric", "numeric", "numeric", 
+         "text", "text", "text", "text", "date", 
+         "text", "text", "numeric", "numeric", 
+         "text", "text", "text", "text", "numeric", 
+         "numeric", "numeric"))
+
+Library_metadata_Andreas
+```
+
+Reading in 18S Metadata from previously sequenced projects (QU39), and mutating to match our formate:
+
+```{r}
+qu39DNA_metadata <- read_excel(
+   "Data_import/metadata_files/qu39DNA_metadata.xlsx", 
+   col_types = c("date", "text", "text",
+                 "text", "date", "date", "text", "numeric",
+                 "text", "date", "text", "numeric",
+                 "numeric", "numeric", "text", "text")) %>% 
+  transmute(
+    Fastq_ID = paste(`Hakai ID`, "-18S_Home", sep = ""),
+    Library_ID = `Hakai ID`,
+    Hakai_ID = `Hakai ID`,
+    Sample_date = Date,
+    Project_name = "QU39",
+    Site_ID = `Site ID`,
+    Line_out_depth = `Line Out Depth`,
+    Sample_type = `Sample Type`,
+    Time_collected = Collected,
+    Time_preserved = Preserved,
+    Sample_volume_ml = `Volume (ml)`,
+    Sample_technician = `Lab Technician`,
+    DNA_extraction_date = `DNA Extraction Date`,
+    DNA_extraction_method = "Phenol-Clorophorm",
+    DNA_volume_ul = `DNA Volume with TE Wash (ul)`,
+    Qubit_DNA_Concentration_ngml = `Qubit DNA Concentration (ng/ml)`,
+    Stock_DNA_Conentration_ngul =`Stock DNA Conentration (ng/ul)`,
+    Extraction_staff = `Extraction Staff`,
+    MiSeq_library = "Home18S",
+    Library_staff = "Catherina Rodriguez"
+  )
+
+qu39DNA_metadata
+
+```
+
+Combining the two 18S metadata sources and saving files:
+
+```{r}
+Samptab_18S_all <- bind_rows(Library_metadata_Andreas, qu39DNA_metadata)
+
+Samptab_18S_all %>% 
+  select(!Quality_log) %>% 
+  write_csv2("Data_import/metadata_files/sample_data_18S_all.csv")
+
+rm(Library_metadata_Andreas, qu39DNA_metadata)
+
+Samptab_18S_all
+```
+
+# 2. General merging functions:
+
+Here follows a set of functions defined for modifying and merging different datatypes.
+
+## completeTaxonomy()
+
+This function modifies the taxonomy table by compleating unassigned taxa. This function assigns the higher taxonomic ranks to unassigned taxoomic levels, using the output of DADA2::assignTaxonomy.
+
+```{r}
+
+#' Fills unassigned taxonomic levels with useful information.
+#'
+#' This function assigns the higher taxonomic ranks to unassigned taxoomic levels, using the output of DADA2::assignTaxonomy.
+#'
+#' @param tax (Required) A list of two matrices. As returned from DADA2::assignTaxonomy(seqtab, database, outputBootstraps =  TRUE).
+#' @param string (Optional, default="_x") A string. Will be attached at the end of the name comming from the higher taxonomic level.
+#' @return A list of two matrices (modified tax object).
+#' @examples
+#' data("tax_16S")
+#' tax_16S <- filterTaxonomy(tax_16S, minboot = 75)
+#' tax_16S <- completeTaxonomy(tax_16S, string = "_x")
+#'
+#' @export
+
+completeTaxonomy <- function(tax, string="_x") {
+  
+  TAX <- tax %>%
+    as.data.frame() %>% 
+    mutate(Annotation_level = 0) %>% 
+    as.matrix()
+
+  names <- colnames(TAX)
+  for (row in 1:nrow(TAX)) {
+    Count <- length(colnames(TAX))-1
+    for (col in 1:(ncol(TAX)-1)) {
+      if (is.na(TAX[row,col])) {
+        Count <- Count - 1
+        TAX[row,col] <- paste(TAX[row,(col-1)],string,sep="")
+      }
+    }
+    TAX[row,ncol(TAX)] <- Count
+  }
+  return(TAX)
+}
+```
+
+## merge_ASV_Tax()
+
+This function is used to merge ASV and Taxonomy tables based on shared DNA sequence identity.
+
+```{r}
+
+#' Merging ASV and Taxonomy table based on sequence
+#' 
+#' Not a generalized function. Only optimised for this analysis directory.
+
+merge_ASV_Tax <- function(dir = "18S_QPKbulk_2017",
+                          taxtab = "tax_tab_18S_MZGdb.RDS") {
+
+  # Read ASV table, transpose and convert to tidy data frame format.
+  ASV_tmp <-
+    read.delim(paste("Data_import/",dir,"/sequence_table.merged.w_ASV_names.txt", sep = "")) %>% 
+    column_to_rownames("row_names") %>% 
+    t() %>%
+    as.data.frame() %>% 
+    rownames_to_column("ASV")
+  
+  # Read taxonomy table, fill NAs with readable information
+  Taxtab_tmp <- readRDS(paste("Data_import/",dir,"/",taxtab, sep = ""))$tax %>%
+    completeTaxonomy("@") %>% 
+    as.data.frame() %>% 
+    rownames_to_column("Sequence")
+  
+  # Read sequence ASV name file. Convert Taxtab sequences to ASV names,
+  # and merge with ASV table.
+  ASV_Tax_tmp <- read_delim(
+    paste("Data_import/",dir,"/sequence_ASVname_mapping.txt", sep = ""),
+    delim = "\t", escape_double = FALSE, 
+    col_names = FALSE) %>% 
+    transmute(ASV = X1, Sequence=X2) %>% 
+    left_join(Taxtab_tmp, by = "Sequence") %>% 
+    select(!Sequence) %>% 
+    left_join(ASV_tmp, by = "ASV")
+}
+
+```
+
+## merge_ASV_Tax_Samp()
+
+This function will use the function above and add sample data, to merge the three objects: ASV, Taxonomy table, and Sample metadata.
+
+```{r}
+#' Merging ASV_Tax table with sample data
+#' 
+merge_ASV_Tax_Samp <- function(Run,
+                               Taxtab,
+                               Samptab ,
+                               Group = NA) {
+  
+  Group <- ifelse(is.na(Group), Run, Group)
+  
+  ASV <- merge_ASV_Tax(Run, Taxtab) %>% 
+    pivot_longer(15:length(.), names_to = "Library_ID", values_to = "Abundance")
+  samples <- ASV %>%
+      pull(Library_ID) %>% unique()
+
+  Merged <- Samptab %>% 
+    filter(MiSeq_library == Group,
+           Library_ID %in% samples) %>% 
+    full_join(ASV, by = "Library_ID") %>%
+    filter(Library_ID != "Undetermined") %>% 
+    mutate(Library_ID = paste(Library_ID, MiSeq_library, sep = "_" ),
+           MiSeq_library = Run)
+
+}
+```
+
+## merge_COI()
+
+This function is a predefined wrapper function for merge_ASV_Tax_Samp(), specific for COI data.
+
+```{r}
+# COI Wrapper:
+merge_COI <- function(Run,
+                      Taxtab = "tax_tab_COI_MZGdb.RDS",
+                      Samptab = Samptab_COI_all,
+                      Group = NA) {
+  merge_ASV_Tax_Samp(Run, Taxtab, Samptab, Group)
+}
+```
+
+## merge_18S()
+
+This function is a predefined wrapper function for merge_ASV_Tax_Samp(), specific for 18S data.
+
+```{r}
+# 18S Wrapper:
+merge_18S <- function(Run,
+                      Taxtab = "tax_tab_18S_MZGdb.RDS",
+                      Samptab = Samptab_18S_all,
+                      Group = NA) {
+  merge_ASV_Tax_Samp(Run, Taxtab, Samptab, Group)
+}
+
+```
+
+## seq_depth_plot()
+
+This is a function to produce a plot of sequence depth per sample, using negative controls to check for contamination.
+
+```{r}
+seq_depth_plot <- function(data) {
+  tmp <- data %>%
+    mutate(Sample_Type = ifelse(
+      is.na(Line_out_depth),
+      "Control",
+      "True_Sample")) %>% 
+    group_by(Library_ID, Sample_Type, MiSeq_library) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size)
+  
+  tmp$Index <- seq(nrow(tmp))
+  tmp %>% 
+    ggplot() +
+    geom_point(aes(Index, Library_Size, colour = Sample_Type, label = Library_ID))
+}
+```
+
+# 3. Merge COI MiSeq runs
+
+This piece of code uses the predefined functions to merge all components of the COI dataset, and to plot sequence depth:
+
+```{r}
+All_COI_data <- bind_rows(
+  merge_COI("COI_QPKbulk_2017"),
+  merge_COI("COI_QU39-2017"),
+  merge_COI("COI_QU39-2018"),
+  merge_COI("COI_QU39-2019"),
+  merge_COI("COI_Zoopsprint2022"))
+
+All_COI_data
+```
+
+
+
+
+
+
+# 4. Merge 18S MiSeq runs
+
+This piece of code uses the predefined functions to merge all components of the 18S dataset, and to plot sequence depth:
+
+```{r}
+All_18S_data <- bind_rows(
+  merge_18S("18S_QPKbulk_2017"),
+  merge_18S("18S_QU39_1", Group = "Home18S"),
+  merge_18S("18S_QU39_2", Group = "Home18S"),
+  merge_18S("18S_QU39_3", Group = "Home18S"),
+  merge_18S("18S_QU39_4", Group = "Home18S"),
+  merge_18S("18S_QU39_5", Group = "Home18S"),
+  merge_18S("18S_QU39_6", Group = "Home18S")
+  )
+
+
+All_18S_data
+
+```
+
+alt: 18S with PR2 database:
+```{r}
+merge_18S_pr2 <- function(Run,
+                      Taxtab = "tax_tab_18S_pr2.RDS",
+                      Samptab = Samptab_18S_all,
+                      Group = NA) {
+  merge_ASV_Tax_Samp(Run, Taxtab, Samptab, Group)
+}
+
+
+All_18S_data_pr2 <- bind_rows(
+  merge_18S_pr2("18S_QPKbulk_2017"),
+  #merge_18S_pr2("18S_QU39_1", Group = "Home18S"), # Not relevant for this project
+  #merge_18S_pr2("18S_QU39_2", Group = "Home18S"), # Not relevant for this project
+  merge_18S_pr2("18S_QU39_3", Group = "Home18S"),
+  merge_18S_pr2("18S_QU39_4", Group = "Home18S")
+  #merge_18S_pr2("18S_QU39_5", Group = "Home18S"), # Not relevant for this project
+  #merge_18S_pr2("18S_QU39_6", Group = "Home18S") # Not relevant for this project
+  )
+
+#All_18S_data %>%
+#  seq_depth_plot() %>% 
+#  plotly::ggplotly()
+
+#All_18S_data %>% 
+#  filter(Library_ID == "QPKBlank-18S_18S_QPKbulk_2017") %>% 
+#  arrange(-Abundance)
+
+#All_18S_data %>% 
+#  filter(Project_name == "QU39")
+
+```
+
+
+
+# 5. Microscopy data
+
+The flowing code will download the needed data sets from Google Drive server and put them in the Data_import directory. Only has to be run once after cloning this directory.
+
+```{r eval=FALSE, include=FALSE}
+# Confirm authorisation with googledrive
+drive_auth()
+
+  require(googledrive)
+drive_auth()
+  
+  repo = "Data_Novotny/ZooplanktonData"
+
+  drive_download(file.path(repo, "Vertical_ZP_count_2022.xlsx"),
+                 "Data_import/Microscopy/Vertical_ZP_2022.xlsx",
+                 overwrite = TRUE)
+  
+  drive_download(file.path(repo, "Hakai_Zooplankton_2013-2017_AN.rds"),
+                 "Data_import/Microscopy/Hakai_Zooplankton_2013-2017_AN.rds",
+                 overwrite = TRUE)
+
+```
+
+The count data set from QU39, counted by DFO
+
+```{r}
+df_count_2017 <- readRDS("Data_import/Microscopy/Hakai_Zooplankton_2013-2017_AN.rds") %>% 
+  mutate(Name = Taxon) %>% 
+  separate(Taxon, sep= " ", into=c("Genus", "Tax1", "Tax2", "Tax3", "Tax4"))
+```
+View filtered volume per sample
+```{r}
+df_count_2017 %>%
+  filter(Station == "QU39") %>% 
+  group_by(Date, , `Volume Filtered(m3)`, region_name) %>% 
+  summarise() %>% 
+  arrange(Date)
+```
+
+
+# TO FIX
+
+## List contributing Hakai staff
+
+```{r}
+
+
+
+
+personel <- All_COI_data %>%
+  group_by(Sample_date) %>% 
+  summarize(Sample_technician = unique(Sample_technician),
+            Extraction_staff = unique(Extraction_staff)) %>%
+  pivot_longer(2:3, names_to = "Task", values_to = "technician") %>% 
+  separate(technician, sep = ",", into = c("A", "B", "C", "D")) %>% 
+  pivot_longer(3:6, values_to = "tecnichian") %>%
+  filter(is.na(tecnichian) == FALSE) %>%
+  filter(year(Sample_date) == 2017) %>% 
+  select(!name)
+
+# Sampling staff  
+personel %>% 
+  filter(Task == "Sample_technician") %>%
+  group_by(tecnichian) %>% 
+  summarise(Days_Sampled = n()) %>% 
+  arrange(-Days_Sampled)
+
+# Extraction staff
+personel %>% 
+  filter(Task == "Extraction_staff") %>%
+  group_by(tecnichian) %>% 
+  summarise(Days_Extracted = n()) %>% 
+  arrange(-Days_Extracted)
+  
+```

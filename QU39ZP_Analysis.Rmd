@@ -12,7 +12,6 @@ Load necessary packages and import functions.
 library(googledrive)
 library(readxl)
 library(phyloseq)
-source("Code/DownloadDatasets.R")
 
 
 # All data format modifications and filtering and plotting
@@ -40,41 +39,132 @@ library(tidyverse)
 
 
 
-The flowing code will download the needed data sets from Google Drive server and put them in the Data_import directory. Only has to be run once after cloning this directory.
 
-```{r eval=FALSE, include=FALSE}
-# Confirm authorisation with googledrive
-drive_auth()
-
-# Update datasets.
-# These functions refere to code specifyed under Code/Import_datasets.R.
-update_DNA_datasets()
-update_Contributed_data()
-```
 
 # ### DATA PREP. ###
 
-# 1. eDNA Data components
+# 1. Sequencing dept and negative controls.
 
-The COI Sequencing data are downloaded in the compact format with a separate ASV, Taxonomy, and Sample Data table. The data tables are read separately and then merged into a tidy data tibble, resembling the data format of most zooplankton count data sets.
+In this section, we have a look at sequenced negative controls for the 18S and the COI libraries, and remove samples that have sequence depth lower than the negative controls.\
+Here we also produce statistics for annotation levels and read success.\
+\
+Plotting sequencing depth and removing low libraries for COI:
+
 
 ```{r}
-# Import downloaded rds (compact r data) files
-ASV_COI <- readRDS("Data_import/COI/ASV_COI.rds")
-Samptab_COI <- readRDS("Data_import/COI/Samptab_COI.rds")
-Taxtab_COI <- readRDS("Data_import/COI/Taxtab_COI.rds")
+# Plot ranked sequencing depth with threshold line
+All_COI_data %>% 
+  seq_depth_plot() +
+  theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+ggsave("Figure_output/Sequencing_Depth_COI.pdf", width = 7, height = 4.5)
 
-# Combine the three components to a tidy data tibble
-df_COI <-
-  full_join(Taxtab_COI, ASV_COI, by = "ASV") %>%
-  pivot_longer(!1:12, names_to = "Library_ID", values_to = "Abundance") %>%
-  full_join(Samptab_COI, by = "Library_ID")
+
+# Filter out libraries under threshold line
+Good_COI_data <- All_COI_data %>% 
+  group_by(Library_ID) %>%
+  filter(Site_ID == "QU39") %>% 
+  filter(sum(Abundance)>10000) %>% 
+  ungroup()
+
+print("Median COI library size:")
+Good_COI_data %>% 
+  group_by(Library_ID) %>% 
+  summarise(SeqDepth = sum(Abundance)) %>%
+  pull(SeqDepth) %>% median
+
+print("Number of final COI libraries:")
+Good_COI_data %>% 
+  pull(Library_ID) %>% unique %>%  length
+
+
+#### NOTE: Taxonomic correction of the subgenus Ditrichocorycaeus, not yet accepted.
+Good_COI_data <- Good_COI_data %>%
+  mutate(Genus = ifelse(Genus == "Ditrichocorycaeus", "Corycaeus", Genus),
+         Species = ifelse(Species == "Ditrichocorycaeus anglicus","Corycaeus anglicus", Species))
 ```
+
+
+Plotting sequencing depth and removing low libraries for 18S:
+
+```{r}
+# Plot ranked sequencing depth
+All_18S_data %>% 
+  seq_depth_plot() +
+  theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+ggsave("Figure_output/Sequencing_Depth_18S.pdf" , width = 7, height = 4.5)
+
+# Filter out libraries with low read counts.
+Good_18S_data <- All_18S_data %>% 
+  group_by(Library_ID) %>% 
+  filter(sum(Abundance)>10000) %>% 
+  ungroup() 
+
+print("Median 18S library size:")
+Good_18S_data %>% 
+  group_by(Library_ID) %>%
+  filter(Site_ID == "QU39") %>% 
+  summarise(SeqDepth = sum(Abundance)) %>%
+  pull(SeqDepth) %>%median
+
+print("Number of final 18S libraries:")
+Good_18S_data %>% 
+  pull(Library_ID) %>% unique %>%  length
+
+#### NOTE: Taxonomic correction of the subgenus Ditrichocorycaeus, not yet accepted.
+Good_18S_data <- Good_18S_data %>%
+  mutate(Genus = ifelse(Genus == "Ditrichocorycaeus", "Corycaeus", Genus),
+         Species = ifelse(Species == "Ditrichocorycaeus anglicus","Corycaeus anglicus", Species))
+```
+## TODO: CHECK 18S metadata components
+
+# 2. Subset and calculate eDNA indexes of data sets:
+
+In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
+
+### Transforming DNA data:
+
+The DNA datasets are transformed identical to the microscopy data sets. Due to their similarity, a generalized function is first created, then executed for the data sets and taxonomic levels individually.
+
+```{r}
+calculate_index <- function(data, taxrank, project) {
+  
+  data %>% 
+    filter(Project_name == project,
+           year(Sample_date) %in% c(2017, 2018, 2019),
+           Kingdom == "Animalia",
+           str_detect({{ taxrank }}, "@", negate = TRUE)) %>%
+    mutate(Taxa = {{ taxrank }},
+           Depth = Line_out_depth,
+           Date = Sample_date,
+           Sample = Library_ID) %>% 
+    index_RA(Sample, Taxa, Abundance, Depth, Date, Hakai_ID)
+}
+
+eDNA_COI_index_species <- calculate_index(Good_COI_data, Species, "QU39")
+eDNA_COI_index_genus <- calculate_index(Good_COI_data, Genus, "QU39")
+
+
+```
+```{r}
+eDNA_COI_index_species
+```
+
+
+
+
 
 
 
 ## List Sampling and Extraction Contributions:
 ```{r}
+
+## TODO: UPDATE CODE
 personel <- Samptab_COI %>%
   filter(year(Sample_date) == 2017) %>% 
   group_by(Sample_date) %>% 
@@ -163,113 +253,13 @@ df_12S <-
 ```
 
 
-## Calculate eDNA Index and clean up datasetds
-
-In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
-
-### COI
-```{r}
-# Filter samples in the dataset
-eDNA_COI <- df_COI %>%
-  filter(Project_name == "QU39",
-         Sample_type == "eDNA",
-         phylum %in% metazoa)
-
-# Species level index
-eDNA_COI_index_species <- eDNA_COI %>% 
-  mutate(Taxa = lca.taxon,
-         Abundance = Abundance,
-         Depth = Line_out_depth,
-         Date = Sample_date) %>% 
-  collapseRAindex(Library_ID, Hakai_ID)
-
-# Genus level ind
-eDNA_COI_index_genus <- eDNA_COI %>% 
-  mutate(Taxa = genus,
-         Abundance = Abundance,
-         Depth = Line_out_depth,
-         Date = Sample_date) %>% 
-  collapseRAindex(Library_ID, Hakai_ID)
-
-
-```
-
-```{r}
-# Clean up datasets
-COI_genus <- eDNA_COI_index_genus %>% 
-  filter(Taxa %in% getGenusList(.)) %>% 
-  mutate(Depth = as.numeric(Depth),
-         Depth = ifelse(Depth>200, 250, Depth),
-         Date = as_date(Date)) %>%
-  filter(is.na(Depth)==F) %>%
-  group_by(Library_ID) %>% 
-  filter(sum(Abundance)>100)
-
-
-COI_species <- eDNA_COI_index_species %>% 
-  filter(Taxa %in% getSpeciesList(.)) %>% 
-  mutate(Depth = as.numeric(Depth),
-         Depth = ifelse(Depth>200, 250, Depth),
-         Date = as_date(Date)) %>%
-  filter(is.na(Depth)==F) %>%
-  
-  # Exclude libraries with too few reads
-  group_by(Library_ID) %>% 
-  filter(sum(Abundance)>500)
-
-COI_species
-
-saveRDS(COI_species, "Data_output/COI_species.rds")
-```
-
-### 18S
-
-```{r}
-# Filter samples in the dataset
-eDNA_18S <- df_18S_ts %>%
-  filter(Phylum %in% metazoa)
-eDNA_18S
-
-
-# Species level index
-eDNA_18S_index_genus <- eDNA_18S %>% 
-  mutate(Taxa = Genus,
-         Abundance = Abundance,
-         Depth = line_out_depth,
-         Date = date) %>% 
-  collapseRAindex(Sample)
-
-eDNA_18S_index_genus
-
-
-
-# Clean up datasets
-S18S_genus <- eDNA_18S_index_genus %>% 
-  filter(Taxa %in% getGenusList(.)) %>% 
-  mutate(Depth = as.numeric(Depth),
-         Depth = ifelse(Depth>200, 250, Depth),
-         Date = as_date(Date)) %>%
-  filter(is.na(Depth)==F) %>%
-  group_by(Sample) %>% 
-  filter(sum(Abundance)>100)
-
-
-S18S_genus
-
-saveRDS(S18S_genus, "Data_output/18S_genus.rds")
-
-
-
-```
-
-
 
 # 2. Environmental Data components
 
 This is the list of Hakai_ID's we have COI data for: 
 ```{r}
-samples_COI <-  S18S_genus %>% 
-  pull(Sample) %>% 
+samples_COI <-  eDNA_COI_index_species %>% 
+  pull(Hakai_ID) %>% 
   unique()
 
 samples_COI
@@ -277,9 +267,12 @@ samples_COI
 
 Extract Hakai Microbial metadata for samples
 ```{r}
-QMIC <- read_excel("./Data_import/2024-02-09_170138_HakaiData_microbial.xlsx", sheet = "Hakai Data") %>% 
+QMIC <- read_excel("./Data_import/2024-02-09_170138_HakaiData_microbial.xlsx",
+                   sheet = "Hakai Data") %>% 
   filter(hakai_id %in% samples_COI) %>% 
   arrange(event_pk)
+
+QMIC
 
 niskin <- QMIC %>% 
   mutate(NISKIN = paste(event_pk, line_out_depth, sep = "_")) %>% 
@@ -372,6 +365,8 @@ bottle_file <- niskin %>%
 
 saveRDS(bottle_file, "Data_output/bottle_file.rds")
 ```
+
+
 
 # ### PLOTS & STATS ###
 
