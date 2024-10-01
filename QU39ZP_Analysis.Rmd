@@ -50,7 +50,6 @@ drive_auth()
 # These functions refere to code specifyed under Code/Import_datasets.R.
 update_DNA_datasets()
 update_Contributed_data()
-
 ```
 
 # ### DATA PREP. ###
@@ -71,6 +70,7 @@ df_COI <-
   pivot_longer(!1:12, names_to = "Library_ID", values_to = "Abundance") %>%
   full_join(Samptab_COI, by = "Library_ID")
 ```
+
 
 
 ## List Sampling and Extraction Contributions:
@@ -167,7 +167,7 @@ df_12S <-
 
 In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
 
-
+### COI
 ```{r}
 # Filter samples in the dataset
 eDNA_COI <- df_COI %>%
@@ -193,7 +193,6 @@ eDNA_COI_index_genus <- eDNA_COI %>%
 
 
 ```
-
 
 ```{r}
 # Clean up datasets
@@ -223,14 +222,57 @@ COI_species
 saveRDS(COI_species, "Data_output/COI_species.rds")
 ```
 
+### 18S
+
+```{r}
+# Filter samples in the dataset
+eDNA_18S <- df_18S_ts %>%
+  filter(Phylum %in% metazoa)
+eDNA_18S
+
+
+# Species level index
+eDNA_18S_index_genus <- eDNA_18S %>% 
+  mutate(Taxa = Genus,
+         Abundance = Abundance,
+         Depth = line_out_depth,
+         Date = date) %>% 
+  collapseRAindex(Sample)
+
+eDNA_18S_index_genus
+
+
+
+# Clean up datasets
+S18S_genus <- eDNA_18S_index_genus %>% 
+  filter(Taxa %in% getGenusList(.)) %>% 
+  mutate(Depth = as.numeric(Depth),
+         Depth = ifelse(Depth>200, 250, Depth),
+         Date = as_date(Date)) %>%
+  filter(is.na(Depth)==F) %>%
+  group_by(Sample) %>% 
+  filter(sum(Abundance)>100)
+
+
+S18S_genus
+
+saveRDS(S18S_genus, "Data_output/18S_genus.rds")
+
+
+
+```
+
+
 
 # 2. Environmental Data components
 
 This is the list of Hakai_ID's we have COI data for: 
 ```{r}
-samples_COI <- COI_species %>% 
-  pull(Hakai_ID) %>% 
+samples_COI <-  S18S_genus %>% 
+  pull(Sample) %>% 
   unique()
+
+samples_COI
 ```
 
 Extract Hakai Microbial metadata for samples
@@ -363,10 +405,34 @@ Abundant_Species
 
 ```
 
+```{r}
+S18S_genus %>%
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  mutate(maxRA = median(RA)) %>%
+  ungroup() %>% 
+  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
+  ggplot() +
+  geom_boxplot(aes(Taxa, RA)) +
+  theme_minimal_hgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
+                                   face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
+  scale_y_continuous(trans='log10')
+
+Abundant_18S_genus <- S18S_genus %>% 
+  group_by(Taxa) %>%
+  mutate(maxRA = median(RA)) %>%
+  filter(max(RA) > 0.1) %>% # 10 Species
+  pull(Taxa) %>%  unique
+Abundant_18S_genus
+
+```
+
 ## Library coverage
 ```{r}
-COI_species %>% 
-  group_by(Library_ID, Depth, Date) %>% 
+S18S_genus %>% 
+  group_by(Sample, Depth, Date) %>% 
   summarise(Abundance = sum(Abundance)) %>% 
   mutate(Depth = factor(Depth, levels = c(
     250, 100, 30, 5, 0
@@ -387,6 +453,7 @@ COI_species %>%
 
 
 ## eDNA profiles
+COI
 ```{r}
 # Make species interpolation:
 Interp_Species <- COI_species %>%
@@ -410,7 +477,7 @@ Interp_Species %>%
   #scale_y_reverse() +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
   #scale_fill_viridis(option = "H") +
-  scale_fill_gradient2(high = 'green',
+  scale_fill_gradient2(high = '#4daf4a',
                        low = "white") +
   theme_minimal_vgrid(font_size = 8) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
@@ -419,15 +486,53 @@ Interp_Species %>%
         #legend.position="none",,
         aspect.ratio = 1/4)
 
+
 ggsave("./Figure_output/COI_Interpolation.pdf")
 
 ```
+
+For pressentation purposes: 
+```{r}
+# Plot dataset
+Interp_Species %>%
+  filter(Taxa %in% c(
+    "Acartia longiremis",
+    "Metridia pacifica",
+    "Pseudocalanus minutus"
+  )) %>% 
+  mutate(Depth = factor(Depth, levels = c(
+    250, 100, 30, 5, 0
+  ))) %>% 
+  ggplot() +
+  geom_raster(aes(Date, Depth, fill = RA_Index)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  facet_wrap("Taxa", ncol = 1) +
+  #scale_y_reverse() +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_viridis(option = "H") +
+  scale_fill_gradient2(high = '#4daf4a',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 15) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/6)
+  
+ggsave("./Figure_output/COI_depth_pres.pdf", width = 10, height = 7)
+```
+
+
+
+
+
 
 Plot lines instead
 
 ```{r}
 Interp_Species %>%
-  filter(Taxa %in% Abundant_Species) %>% 
+  filter(Taxa %in% "Acartia longiremis") %>% 
   mutate(Depth = factor(Depth)) %>%
   ggplot() +
   geom_line(aes(Date, RA_Index, color = Depth)) +
@@ -441,9 +546,41 @@ Interp_Species %>%
         aspect.ratio = 1/4) +
   scale_color_manual(values = depth_colors)
   
-  ggsave("./Figure_output/COI_Interpolation_lines.pdf")
+  ggsave("./Figure_output/COI_Interpolation_acartia.pdf")
   
 
+```
+18S
+
+```{r}
+
+# Make species interpolation:
+Interp_genus <- S18S_genus %>%
+  filter(Taxa %in% c("Paracalanus", "Centropages")) %>%
+  group_by(Taxa) %>%
+  group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
+                                     # res 
+                                     x1res = 1, x2res = 1, k = 14,
+                                     dim = 1))
+
+
+
+Interp_genus %>%
+  filter(Taxa %in% Abundant_18S_genus) %>% 
+  mutate(Depth = factor(Depth)) %>%
+  ggplot() +
+  geom_line(aes(Date, RA_Index, color = Depth)) +
+  facet_wrap("Taxa", scales = "free", ncol = 1) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+
+ggsave("Figure_output/centropages_paracalanus.pdf")
 ```
 
 
@@ -457,8 +594,8 @@ Bottle_File <- bottle_file %>%
   dplyr::transmute(Hakai_ID = hakai_id,
                    Date = date,
                    Depth = line_out_depth,
-                   depth = factor(line_out_depth, levels = c("260", "100",
-                                                             "30", "5", "0")),
+                   depth = factor(line_out_depth, levels = rev(c("260", "100",
+                                                             "30", "5", "0"))),
                    Temperature = Temperature,
                    Salinity = Salinity,
                    PAR = PAR,
@@ -486,7 +623,7 @@ Bottle_File
 
 
 Bottle_File %>%
-  filter() %>% 
+  filter(Variable == "chlA (>20um)") %>% 
   ggplot() +
   geom_line(aes(Date, value, color = depth)) +
   facet_wrap("Variable", scales = "free", ncol = 2) +
@@ -502,6 +639,27 @@ Bottle_File %>%
 ggsave("./Figure_output/Bottle_Data.pdf")
 
 ```
+
+
+For pressentation purposes: 
+```{r}
+Bottle_File %>%
+  filter(Variable == "chlA (>20um)") %>% 
+  ggplot() +
+  geom_line(aes(Date, value, color = depth)) +
+  facet_wrap("Variable", scales = "free", ncol = 2) +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4) +
+  scale_color_manual(values = depth_colors)
+
+  ggsave("./Figure_output/chlA_press.pdf")
+```
+
 
 
 # 3. Community analysis:
