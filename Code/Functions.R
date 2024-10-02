@@ -121,8 +121,8 @@ interpolate_rollmean <- function(data, x1, x2, y,
   # First level interpolation of x1 parameter
   interpolate_x1 <- function(x1_target, x2_target) {
     data_filt <- data %>% 
-      filter(x2 == x2_target) %>%
-      arrange(x1)
+      dplyr::filter(x2 == x2_target) %>%
+      dplyr::arrange(x1)
     
     approx(data_filt$x1, data_filt$y, xout = x1_target)$y
   } # END interpolate_x1 function
@@ -131,35 +131,35 @@ interpolate_rollmean <- function(data, x1, x2, y,
   interpolate_x2 <- function(x1_target, x2_target) {
     data_filt <- interp_x1 %>% 
       dplyr::filter(x1 == x1_target) %>%
-      arrange(x2)
+      dplyr::arrange(x2)
     
     approx(data_filt$x2, data_filt$y, xout = x2_target, na.rm = TRUE)$y
   } # END interpolate_x2 function
   
   # Generalize datasets
   data <- data %>% 
-    transmute(x1 = {{x1}}, x2 = {{x2}}, y = {{y}})
+    dplyr::transmute(x1 = {{x1}}, x2 = {{x2}}, y = {{y}})
   
   # Execute first interpolation along x1
   interp_x1 <-
-    crossing(
-      tibble(x1 = seq(min(data$x1), max(data$x1), by = x1res)),
-      tibble(x2 = unique(data$x2))) %>% 
-    group_by(x2) %>% 
-    mutate(y = interpolate_x1(x1, x2[1])) %>% 
-    filter(is.na(y) == FALSE) %>% 
-    group_by(x1) %>% 
-    filter(length(x1)>1) %>%
+    tidyr::crossing(
+      dplyr::tibble(x1 = seq(min(data$x1), max(data$x1), by = x1res)),
+      dplyr::tibble(x2 = unique(data$x2))) %>% 
+    dplyr::group_by(x2) %>% 
+    dplyr::mutate(y = interpolate_x1(x1, x2[1])) %>% 
+    dplyr::filter(is.na(y) == FALSE) %>% 
+    dplyr::group_by(x1) %>% 
+    dplyr::filter(length(x1)>1) %>%
     #RollingMean starts here:
-    group_by(x2) %>% 
-    mutate(y = zoo::rollmean(y, k = k, fill = NA)) %>% 
-    ungroup() %>% 
-    filter(is.na(y) == FALSE)
+    dplyr::group_by(x2) %>% 
+    dplyr::mutate(y = zoo::rollmean(y, k = k, fill = NA)) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::filter(is.na(y) == FALSE)
   
   if (dim == 1) {
     
     out <- interp_x1 %>% 
-      transmute("{{x1}}" := x1,
+      dplyr::transmute("{{x1}}" := x1,
                 "{{x2}}" := x2,
                 "{{y}}" := y)
     return(out)
@@ -168,13 +168,13 @@ interpolate_rollmean <- function(data, x1, x2, y,
   if (dim == 2) {
     interp_x2 <-
       crossing(
-        tibble(x2 = seq(min(interp_x1$x2), max(interp_x1$x2), by = x2res)),
-        tibble(x1 = unique(interp_x1$x1))) %>%
-      group_by(x1) %>%
-      mutate(y = interpolate_x2(x1[1], x2))
+        dplyr::tibble(x2 = seq(min(interp_x1$x2), max(interp_x1$x2), by = x2res)),
+        dplyr::tibble(x1 = unique(interp_x1$x1))) %>%
+      dplyr::group_by(x1) %>%
+      dplyr::mutate(y = interpolate_x2(x1[1], x2))
     
     out <- interp_x2 %>% 
-      transmute("{{x1}}" := x1,
+      dplyr::transmute("{{x1}}" := x1,
                 "{{x2}}" := x2,
                 "{{y}}" := y)
     return(out)

@@ -11,7 +11,7 @@ Load necessary packages and import functions.
 # Data import
 library(googledrive)
 library(readxl)
-library(phyloseq)
+#library(phyloseq)
 
 
 # All data format modifications and filtering and plotting
@@ -24,7 +24,6 @@ library(zoo)
 library(vegan)
 
 # Specific plotting tools
-library(plotly)
 library(ggpubr)
 library(paletteer)
 library(viridis)
@@ -121,140 +120,150 @@ Good_18S_data <- Good_18S_data %>%
   mutate(Genus = ifelse(Genus == "Ditrichocorycaeus", "Corycaeus", Genus),
          Species = ifelse(Species == "Ditrichocorycaeus anglicus","Corycaeus anglicus", Species))
 ```
-## TODO: CHECK 18S metadata components
+# 2. Taxonomic streamlining and eDNA indexing
 
-# 2. Subset and calculate eDNA indexes of data sets:
 
-In this section the different data formats of the 2017 QU39 time series will be mutated into similar data shapes and transformed in such a way that the data types can be compared. To keep filtering parameters equal for all data types, a set of functions are first defined, that are then executed for all data sets. Comparisons are done both at species and at genus level.
-
-### Transforming DNA data:
-
-The DNA datasets are transformed identical to the microscopy data sets. Due to their similarity, a generalized function is first created, then executed for the data sets and taxonomic levels individually.
+This code chunk is to streamline the taxonomy between the COI and trait dataset,
+by moving species not present in the trait data (or in the microscopy data) to genus level.
+Thus getting a general "Taxa" level.
 
 ```{r}
-calculate_index <- function(data, taxrank, project) {
+# 1. Create a a Genus / Species list for COI data  
+Taxa_COI <- Good_COI_data %>% 
+  filter(Abundance > 0) %>%
+  group_by(Species, Genus) %>% 
+  summarize(Abundance = sum(Abundance)) %>% 
+  filter(!grepl("@", Genus)) %>%
+  mutate(Level = ifelse(grepl("@", Species), "Genus", "Species")) %>% 
+  mutate(Species = ifelse(grepl("@", Species), paste(Genus, "sp.", sep = " "), Species)) %>% 
+  select(Genus, Species, Level, Abundance)
+
+# 2. Create a a Genus / Species list for Microscopy data
+Taxa_MIC <- df_count_2017 %>%
+  filter(Abundance > 0) %>%
+  group_by(Genus, Tax1) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  mutate(Species = ifelse(Tax1 == "*sp.", paste(Genus, "sp.", sep = " "), paste(Genus, Tax1, sep = " "))) %>%
+  mutate(Level = ifelse(Tax1 == "*sp.", "Genus", "Species")) %>% 
+  select
+
+# 3. Read in Trait dataset
+trait_dataset <- read_csv("Data_import/Traits/trait_dataset_level2-2023-09-14.csv")
+
+
+# 4. Filter the COI species that occurs in microscopy data and in the trait database.
+# Get list of common species
+Species_COI_MIC_TRAIT <- Taxa_COI %>% 
+  filter(Level == "Species",
+         Species %in% Taxa_MIC$Species,
+         Species %in% trait_dataset$scientificName) %>% 
+  pull(Species)
+Species_COI_MIC_TRAIT
+
+# 5. Remove the common species from the original COI list. Filter remaining genera common in microscopy, and trait data.
+# Get list of common and remaining genus names 
+Genus_COI_MIC_TRAIT <- Taxa_COI %>% 
+  filter(Species %!in% Species_COI_MIC_TRAIT,
+         Genus %in% Taxa_MIC$Genus,
+         Genus %in% trait_dataset$scientificName) %>% 
+  pull(Genus) %>% unique()
+
+# List of valid species
+Species_COI_MIC_TRAIT
+
+# List of valid genera
+Genus_COI_MIC_TRAIT
+```
+
+Filter COI dataset based on Genus and species list
+
+```{r}
+# 6. Filter all COI data, for only valid species.
+tmp_sp <- Good_COI_data %>% 
+  filter(Species %in% Species_COI_MIC_TRAIT) %>% 
+  mutate(Taxa = Species)
+
+# 7. Filter remaining COI data for valid genera
+tmp_genus <- Good_COI_data %>% 
+  filter(Species %!in% Species_COI_MIC_TRAIT,
+         Genus %in% Genus_COI_MIC_TRAIT) %>% 
+  mutate(Taxa = Genus)
+
+# 8. Merge datasets, summarize by sample and taxonomic level and
+# Calculate eDNA-index
+
+eDNA_COI_indexed <- bind_rows(tmp_sp, tmp_genus) %>%
+  filter(is.na(Abundance) == FALSE) %>% 
+  group_by(Library_ID, Hakai_ID, Line_out_depth, Sample_date, Project_name, Taxa) %>% 
+  summarize(Abundance = sum(Abundance)) %>%
+  filter(Project_name == "QU39",
+         year(Sample_date) %in% c(2017, 2018, 2019)) %>% 
+  index_RA(Hakai_ID, Taxa, Abundance, Line_out_depth, Sample_date)
+```
+
+
+Filter Microscopy dataset based on Genus and species list
+```{r}
+# Repeat step 6-7 but for microscopy data, to get biomass scaling for the same taxonomic levels.
+
+tmp_sp <- df_count_2017 %>% 
+  mutate(Species = str_squish(paste(Genus, Tax1, by = ""))) %>%
+  filter(Species %in% Species_COI_MIC_TRAIT) %>%
+  mutate(Taxa = Species)
+
+tmp_genus <- df_count_2017 %>% 
+  mutate(Species = str_squish(paste(Genus, Tax1, by = ""))) %>%
+  filter(Species %!in% Species_COI_MIC_TRAIT,
+         Genus %in% Genus_COI_MIC_TRAIT) %>%
+  mutate(Taxa = Genus)
+
+Biomass_sum <-bind_rows(tmp_sp, tmp_genus) %>%
+  filter(is.na(Abundance) == FALSE) %>% 
+  group_by(Taxa) %>% 
+  summarize(Biomass = round(sum(Abundance))) %>%
+  arrange(-Biomass)
+```
+
+Compare biomass and sequence abundance
+```{r}
+eDNA_COI_indexed %>%
+  group_by(Taxa) %>% 
+  summarise(Seq_Abundance = sum(Abundance)) %>% 
+  left_join(Biomass_sum) %>% 
+  arrange(-Biomass)
+```
+
+Filter Trait dataset based on listls:
+
+```{r}
+Trait_filt <- trait_dataset %>% 
+  filter(scientificName %in% eDNA_COI_indexed$Taxa) %>% 
+  mutate(Taxa = scientificName)
+
+Trait_filt %>% 
+  filter(valueType == "binary") %>% 
+  group_by(Taxa, traitName) %>% 
+  summarise(traitValue) %>% 
+  pivot_wider(names_from = "traitName", values_from = "traitValue")
+
+
+Trait_filt %>% 
+  filter(valueType == "categorical") %>% 
+  group_by(Taxa, traitName) %>% 
+  summarise(Value = paste(traitValue, sep = " "))
+
+
+Trait_filt %>% 
+  pull(valueType) %>% unique
+  select(1:3)
   
-  data %>% 
-    filter(Project_name == project,
-           year(Sample_date) %in% c(2017, 2018, 2019),
-           Kingdom == "Animalia",
-           str_detect({{ taxrank }}, "@", negate = TRUE)) %>%
-    mutate(Taxa = {{ taxrank }},
-           Depth = Line_out_depth,
-           Date = Sample_date,
-           Sample = Library_ID) %>% 
-    index_RA(Sample, Taxa, Abundance, Depth, Date, Hakai_ID)
-}
-
-eDNA_COI_index_species <- calculate_index(Good_COI_data, Species, "QU39")
-eDNA_COI_index_genus <- calculate_index(Good_COI_data, Genus, "QU39")
-
-
-```
-```{r}
-eDNA_COI_index_species
+  
+  group_by(valueType) %>% summarise()
 ```
 
 
 
-
-
-
-
-## List Sampling and Extraction Contributions:
-```{r}
-
-## TODO: UPDATE CODE
-personel <- Samptab_COI %>%
-  filter(year(Sample_date) == 2017) %>% 
-  group_by(Sample_date) %>% 
-  summarize(Sample_technician = unique(Sample_technician),
-            Extraction_staff = unique(Extraction_staff)) %>%
-  pivot_longer(2:3, names_to = "Task", values_to = "technician") %>% 
-  separate(technician, sep = ",", into = c("A", "B", "C", "D")) %>% 
-  pivot_longer(3:6, values_to = "tecnichian") %>%
-  filter(is.na(tecnichian) == FALSE) %>% 
-  select(!name)
-
-# Sampling staff  
-personel %>% 
-  filter(Task == "Sample_technician") %>%
-  group_by(tecnichian) %>% 
-  summarise(Days_Sampled = n()) %>% 
-  arrange(-Days_Sampled)
-
-# Extraction staff
-personel %>% 
-  filter(Task == "Extraction_staff") %>%
-  group_by(tecnichian) %>% 
-  summarise(Samples_Extracted = n()) %>% 
-  arrange(-Samples_Extracted)
-```
-
-List contributions for QU39 microbial:
-
-```{r}
-
-
-personel <- read_excel("./Data_import/2024-02-09_170138_HakaiData_microbial.xlsx", sheet = "Hakai Data") %>%
-  filter(year(date) %in% c("2015", "2016", "2017", "2018", "2019")) %>% 
-  filter(microbial_sample_type == "DNA") %>% 
-  group_by(date) %>% 
-  summarize(lab_technician = unique(lab_technician),
-            extracting_staff = unique(extracting_staff)) %>%
-  pivot_longer(2:3, names_to = "Task", values_to = "technician") %>% 
-  separate(technician, sep = ",", into = c("A", "B", "C", "D")) %>% 
-  pivot_longer(3:6, values_to = "tecnichian") %>%
-  filter(is.na(tecnichian) == FALSE) %>% 
-  select(!name)
-
-# Sampling staff  
-personel %>% 
-  filter(Task == "lab_technician") %>%
-  group_by(tecnichian) %>% 
-  summarise(Days_Sampled = n()) %>% 
-  arrange(-Days_Sampled)
-
-# Extraction staff
-personel %>% 
-  filter(Task == "extracting_staff") %>%
-  group_by(tecnichian) %>% 
-  summarise(Samples_Extracted = n()*5) %>% 
-  arrange(-Samples_Extracted)
-
-
-
-
-
-
-```
-
-
-This is the contributed data set from Catherinas 18S sequencing project. The data is downloaded as a Phyloseq object, and melted into a data frame to resemble the data above.
-
-```{r}
-df_18S_ts <- readRDS("Data_import/Contributed18S/ps_18S.rds") %>% psmelt()
-```
-
-
-
-```{r}
-# Import downloaded rds (compact r data) files
-ASV_12S <- readRDS("Data_import/12S/ASV_12S.rds")
-Samptab_12S <- readRDS("Data_import/12S/Samptab_12S.rds")
-Taxtab_12S <- readRDS("Data_import/12S/Taxtab_12S.rds")
-
-
-# Combine the three components to a tidy data tibble
-df_12S <-
-  full_join(Taxtab_12S, ASV_12S, by = "ASV") %>% 
-  pivot_longer(!1:11, names_to = "Library_ID", values_to = "Abundance") %>% 
-  full_join(Samptab_12S, by = "Library_ID")
-```
-
-
-
-# 2. Environmental Data components
+# 3. Environmental Data components
 
 This is the list of Hakai_ID's we have COI data for: 
 ```{r}
@@ -368,93 +377,141 @@ saveRDS(bottle_file, "Data_output/bottle_file.rds")
 
 
 
+
+# Summary, filtered datasets:
+```{r}
+saveRDS(bottle_file, "Data_output/bottle_file.rds")
+saveRDS(eDNA_COI_indexed, "Data_output/eDNA_COI_indexed.rds")
+saveRDS(Trait_filt, "Data_output/Trait_filt.rds")
+```
+
+
+
 # ### PLOTS & STATS ###
 
-# 1. Diagnostic plots
-
-## Average relative abundace
-Species level:
 ```{r}
-COI_species %>%
-  filter(Abundance > 0) %>%
-  group_by(Taxa) %>% 
-  mutate(maxRA = median(RA)) %>%
-  ungroup() %>% 
-  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
-  ggplot() +
-  geom_boxplot(aes(Taxa, RA)) +
-  theme_minimal_hgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
-                                   face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
-  scale_y_continuous(trans='log10')
-
-Abundant_Species <- COI_species %>% 
-  group_by(Taxa) %>%
-  mutate(maxRA = median(RA)) %>%
-  #filter(maxRA >= 0.01) %>% # 15 species
-  #filter(max(RA) >0.14) %>% # 15 species
-  filter(max(RA) >0.24) %>% # 10 Species
-  pull(Taxa) %>%  unique
-Abundant_Species
-
+bottle_file <- readRDS("Data_output/bottle_file.rds")
+eDNA_COI_indexed <- readRDS("Data_output/eDNA_COI_indexed.rds")
+Trait_filt <- readRDS("Data_output/Trait_filt.rds")
 ```
 
-```{r}
-S18S_genus %>%
-  filter(Abundance > 0) %>%
-  group_by(Taxa) %>% 
-  mutate(maxRA = median(RA)) %>%
-  ungroup() %>% 
-  mutate(Taxa = fct_reorder(Taxa, -maxRA)) %>% 
-  ggplot() +
-  geom_boxplot(aes(Taxa, RA)) +
-  theme_minimal_hgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
-                                   face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
-  scale_y_continuous(trans='log10')
-
-Abundant_18S_genus <- S18S_genus %>% 
-  group_by(Taxa) %>%
-  mutate(maxRA = median(RA)) %>%
-  filter(max(RA) > 0.1) %>% # 10 Species
-  pull(Taxa) %>%  unique
-Abundant_18S_genus
-
-```
-
-## Library coverage
-```{r}
-S18S_genus %>% 
-  group_by(Sample, Depth, Date) %>% 
-  summarise(Abundance = sum(Abundance)) %>% 
-  mutate(Depth = factor(Depth, levels = c(
-    250, 100, 30, 5, 0
-  ))) %>% 
-  ggplot() +
-  geom_raster(aes(Date, Depth)) +
-  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
-  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
-  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
-  #scale_fill_gradient2(high = '#4daf4a') +
-  theme_minimal_vgrid(font_size = 8) +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        aspect.ratio = 1/4)
-
-
-```
 
 
 ## eDNA profiles
 COI
 ```{r}
+eDNA_COI_indexed %>% 
+  filter(Abundance > 1) %>% 
+  group_by(Taxa) %>% 
+  summarize(n = n())
+
+
+data <- eDNA_COI_indexed %>% 
+  filter(Taxa == "Pseudocalanus minutus")
+
+#interpolate_rollmean <- function(data, x1, x2, y,
+#                                 x1res, x2res,
+#                                 k = 1, dim = 2) {
+#  
+  # First level interpolation of x1 parameter
+  interpolate_x1 <- function(x1_target, x2_target) {
+    data_filt <- data %>% 
+      dplyr::filter(x2 == x2_target) %>%
+      dplyr::arrange(x1)
+    
+    approx(data_filt$x1, data_filt$y, xout = x1_target)$y
+  } # END interpolate_x1 function
+  
+  # Second level interpolation of x2 parameter
+  interpolate_x2 <- function(x1_target, x2_target) {
+    data_filt <- interp_x1 %>% 
+      dplyr::filter(x1 == x1_target) %>%
+      dplyr::arrange(x2)
+    
+    approx(data_filt$x2, data_filt$y, xout = x2_target, na.rm = TRUE)$y
+  } # END interpolate_x2 function
+  
+  
+  
+  # Generalize datasets
+  data <- data %>% 
+    dplyr::transmute(x1 = Sample_date, x2 = Line_out_depth, y = RA_Index)
+  
+  # Execute first interpolation along x1
+  interp_x1 <-
+    tidyr::crossing(
+      dplyr::tibble(x1 = seq(min(data$x1), max(data$x1), by = 1)),
+      dplyr::tibble(x2 = unique(data$x2)))
+    dplyr::group_by(x2) %>% 
+    dplyr::mutate(y = interpolate_x1(x1, x2[1])) %>% 
+    dplyr::filter(is.na(y) == FALSE) %>% 
+    dplyr::group_by(x1) %>% 
+    dplyr::filter(length(x1)>1) %>%
+    #RollingMean starts here:
+    dplyr::group_by(x2) %>% 
+    dplyr::mutate(y = zoo::rollmean(y, k = k, fill = NA)) %>% 
+    dplyr::ungroup() %>% 
+    dplyr::filter(is.na(y) == FALSE)
+  
+  if (dim == 1) {
+    
+    out <- interp_x1 %>% 
+      dplyr::transmute("{{x1}}" := x1,
+                "{{x2}}" := x2,
+                "{{y}}" := y)
+    return(out)
+    
+    }
+  if (dim == 2) {
+    interp_x2 <-
+      crossing(
+        dplyr::tibble(x2 = seq(min(interp_x1$x2), max(interp_x1$x2), by = x2res)),
+        dplyr::tibble(x1 = unique(interp_x1$x1))) %>%
+      dplyr::group_by(x1) %>%
+      dplyr::mutate(y = interpolate_x2(x1[1], x2))
+    
+    out <- interp_x2 %>% 
+      dplyr::transmute("{{x1}}" := x1,
+                "{{x2}}" := x2,
+                "{{y}}" := y)
+    return(out)
+  }
+}
+```
+
+
+```{r}
+filter(Abundance > 0) %>% 
+  interpolate_rollmean(Sample_date, Line_out_depth, y = RA_Index, x1res = 10, x2res = 10)
+  
+  
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c(
+    260, 100, 30, 5, 0
+  ))) %>%
+  ggplot() +
+  geom_raster(aes(Sample_date, Line_out_depth, fill = RA_Index))
+  
+  
+  
+  
+  
+  
+  
+  
+  
+```
+
+
+```{r}
 # Make species interpolation:
-Interp_Species <- COI_species %>%
-  filter(Taxa %in%Abundant_Species) %>%
+Interp_Species <- eDNA_COI_indexed %>%
+  filter(Taxa %in% c(
+    "Acartia",
+    "Metridia pacifica",
+    "Pseudocalanus minutus"
+  )) %>% 
   group_by(Taxa) %>%
-  group_modify(~interpolate_rollmean(.x, x1 = Date, x2 = Depth, y = RA_Index,
+  group_modify(~interpolate_rollmean(.x, x1 = Sample_date, x2 = Line_out_depth, y = RA_Index,
                                      # res 
                                      x1res = 1, x2res = 1, k = 14,
                                      dim = 1))
@@ -465,7 +522,7 @@ Interp_Species %>%
     250, 100, 30, 5, 0
   ))) %>% 
   ggplot() +
-  geom_raster(aes(Date, Depth, fill = RA_Index)) +
+  geom_raster(aes(Sample_date, Line_out_depth, fill = RA_Index)) +
   geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
   geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
   facet_wrap("Taxa", ncol = 2) +
