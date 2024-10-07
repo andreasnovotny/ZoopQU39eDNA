@@ -399,6 +399,45 @@ Trait_filt <- readRDS("Data_output/Trait_filt.rds")
 ```
 
 
+
+## Filter taxa with to little data to be able to calculate distribution:
+
+```{r}
+# Plot distributions, arrange based on 
+
+eDNA_COI_indexed %>% 
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  mutate(maxRA = max(RA)) %>%
+  mutate(disper = quantile(RA_Index, 0.75)-quantile(RA_Index, 0.25)) %>% 
+  ungroup() %>% 
+  mutate(Taxa = fct_reorder(Taxa, -disper)) %>% 
+  ggplot() +
+  geom_boxplot(aes(Taxa, RA_Index)) +
+  theme_minimal_hgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1,
+                                   face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) #+
+  scale_y_continuous(trans='log10')
+  
+  
+  
+useful_taxa <- eDNA_COI_indexed %>% 
+  filter(Abundance > 0) %>%
+  group_by(Taxa) %>% 
+  summarise(disper = quantile(RA_Index, 0.75)-quantile(RA_Index, 0.25)) %>% 
+  ungroup() %>% 
+  filter(disper > 0) %>% 
+  arrange(-disper) %>%
+  mutate(Taxa = fct_reorder(Taxa, -disper)) %>%
+  pull(Taxa)
+
+useful_taxa
+```
+
+
+
+
 ## eDNA profiles
 ```{r}
 eDNA_COI_interpolated <- eDNA_COI_indexed %>% 
@@ -417,7 +456,8 @@ eDNA_COI_interpolated <- eDNA_COI_indexed %>%
 ```{r}
 # Plot dataset
 eDNA_COI_interpolated %>%
-  #filter(Taxa == "Acartia") %>% 
+  #mutate(Taxa = factor(Taxa, levels = useful_taxa)) %>%
+  filter(Taxa %in% useful_taxa) %>% 
   ggplot() +
   geom_raster(aes(Date, Depth, fill = RA_Index)) +
   geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
@@ -444,19 +484,17 @@ Plot lines instead
 
 ```{r}
 eDNA_COI_interpolated %>%
-  filter(Taxa %in% "Acartia") %>% 
+  filter(Taxa %in% useful_taxa) %>% 
   mutate(Depth = factor(Depth, levels = rev(c("260", "100",
                                               "30", "5", "0")))) %>%
   ggplot() +
   geom_line(aes(Date, RA_Index, color = Depth)) +
-  facet_wrap("Taxa", scales = "free", ncol = 2) +
+  facet_wrap("Taxa", scales = "free", ncol = 4) +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
   theme_minimal_vgrid(font_size = 10) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         #strip.text = element_text(face = "italic"),
-        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
-        #legend.position="none",,
-        aspect.ratio = 1/4) +
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey')) +
   scale_color_manual(values = depth_colors)
   
   ggsave("./Figure_output/COI_Interpolation_acartia.pdf")
@@ -537,14 +575,16 @@ prepare data for cca:
 ```{r}
 
 
-comm <- eDNA_COI_indexed %>% 
+comm <- eDNA_COI_indexed %>%
+  filter(Taxa %in% useful_taxa,
+         Line_out_depth %!in% c(0, 260)) %>% 
   dplyr::group_by(Hakai_ID, Taxa) %>% 
   summarise(Index = mean(RA_Index)) %>%
   pivot_wider(names_from = "Taxa", values_from = "Index") %>%
   mutate_all(~replace(., is.na(.), 0)) %>% 
+  filter(Hakai_ID != "QMIC2470") %>%          ####### WARNING - FILTERED OUTLIER SAMPLE. Verify!
   arrange(Hakai_ID) %>%
   column_to_rownames("Hakai_ID")
-comm
 
 env <- bottle_file %>% 
   arrange(hakai_id) %>%
@@ -564,6 +604,8 @@ tibble(comm = row.names(comm),
 saveRDS(comm, "Data_output/comm.RDS")
 saveRDS(env, "Data_output/env.RDS")
 
+
+
 ```
 
 Model filt with stepwise reduction
@@ -571,113 +613,18 @@ Model filt with stepwise reduction
 
 "Function vif.cca gives the variance inflation factors for each constraint or contrast in factor constraints. In partial ordination, conditioning variables are analysed together with constraints. Variance inflation is a diagnostic tool to identify useless constraints. A common rule is that values over 10 indicate redundant constraints. If later constraints are complete linear combinations of conditions or previous constraints, they will be completely removed from the estimation, and no biplot scores or centroids are calculated for these aliased constraints. A note will be printed with default output if there are aliased constraints. Function alias will give the linear coefficients defining the aliased constraints, or only their names with argument names.only = TRUE."
 
-This i a stepwise reduction with all variables. Do not use:
-```{r}
-# Model all environmental parameters
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month +
-             chla_20um + chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
-             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um + po4,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-# Remove po4
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month +
-             chla_20um + chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
-             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-# Remove chl_20
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
-             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-# Remove phaeo_20
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
-             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-# chla_GF/F
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um + `chla_Bulk GF/F` +
-             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-# Remove `chla_Bulk GF/F` 
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um +
-             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
-             no2_no3_um,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-
-#remove no2_no3_um
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um +
-             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F`,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-plot(mod)
-
-#remove phaeo_3um
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             Depth + Month + 
-             chla_3um +
-             `phaeo_GF/F` + `phaeo_Bulk GF/F`,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-plot(mod)
-
-
-
-env
-```
-
 
 Alt 2 only include selected from beginning:
 ```{r}
-# Model all RELEVANT environmental parameters
-mod <- cca(comm ~
-             Temperature + Salinity + PAR + Turbidity + O2 +
-             chla_20um + chla_3um +`chla_GF/F` + 
-             no2_no3_um + po4,
-           data = env,
-           na.action = na.omit)
-vif.cca(mod)
-plot(mod)
+ Model all RELEVANT environmental parameters
+#mod <- cca(comm ~
+#             Temperature + Salinity + PAR + Turbidity + O2 +
+#             chla_20um + chla_3um +`chla_GF/F` + 
+#             no2_no3_um + po4,
+#           data = env,
+#           na.action = na.omit)
+#vif.cca(mod)
+#plot(mod)
 
 # Remove PO4
 mod <- cca(comm ~
@@ -687,9 +634,14 @@ mod <- cca(comm ~
            data = env,
            na.action = na.exclude)
 vif.cca(mod)
-plot(mod)
 
-mod
+mod <- cca(comm ~
+             Temperature +
+             chla_20um + chla_3um +`chla_GF/F`,
+           data = env,
+           na.action = na.exclude)
+vif.cca(mod)
+
 ```
 
 
@@ -698,7 +650,6 @@ mod
 cca_taxa <- scores(mod)$species %>% 
   as.data.frame() %>% 
   rownames_to_column("Taxa")
-cca_taxa
 
 # Environmental cca scores
 cca_variable <- scores(mod)$biplot %>%
@@ -727,7 +678,7 @@ ggplot() +
   geom_point(data = cca_sample, aes(x = CCA1, y = CCA2, color = Month, shape = Depth), size = 2) +
   
   #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
-  geom_text_repel(data = veg_2,
+  ggrepel::geom_text_repel(data = cca_taxa,
                   aes(x = CCA1, y = CCA2, label = Taxa),
                   #nudge_y = -0.05,
                   size = 2.5) +
@@ -748,7 +699,7 @@ ggplot() +
   geom_point(data = cca_sample, aes(x = CCA1, y = CCA2, color = Depth), size = 1) +
   
   #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
-  geom_text_repel(data = veg_2,
+  ggrepel::geom_text_repel(data = cca_taxa,
                   aes(x = CCA1, y = CCA2, label = Taxa),
                   #nudge_y = -0.05,
                   size = 2.5) +
@@ -835,6 +786,111 @@ plotNMDS(250)
 
 
 
+# Hierarchicl clustering:
+
+
+make species and trait matrixes:
+
+```{r}
+species_mat <- comm %>% 
+  as.matrix() %>% 
+  t()
+
+trait_mat <- Trait_filt %>% 
+  filter(traitName %in% traits) %>% 
+  select(scientificName, traitName, traitValue) %>% 
+  mutate(traitValue = as.numeric(traitValue)) %>% 
+  pivot_wider(names_from = traitName, values_from = traitValue) %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  column_to_rownames("scientificName") %>% 
+  as.matrix()
+```
+
+Hierarchical clustering:
+```{r}
+species_mat %>%
+  vegdist() %>% 
+  hclust() %>% 
+  plot()
+
+trait_mat %>% 
+  vegdist() %>%
+  hclust() %>%
+  plot()
+```
+
+NMDS:
+
+```{r}
+species_mod <- species_mat %>%
+  t() %>% 
+  metaMDS()
+
+Site_scores <- scores(species_mod)$sites %>%
+  as.data.frame() %>% 
+  rownames_to_column("Sample")
+Taxa_scores <- scores(species_mod)$species %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Taxa")
+```
+
+
+```{r}
+ggplot() +
+   geom_text(data = Taxa_scores, aes(NMDS1, NMDS2, label = Taxa),
+            size = 3, colour = "grey", fontface = "italic")
+  #geom_point(data = Site_scores, aes(NMDS1, NMDS2), size = 3)
+
+  
+  species_mat %>%
+  vegdist() %>% 
+  hclust() %>% 
+  plot()
+
+```
+NMDS:
+
+```{r}
+species_mod <- trait_mat %>%
+  metaMDS()
+
+Site_scores <- scores(species_mod)$sites %>%
+  as.data.frame() %>% 
+  rownames_to_column("Sample")
+Taxa_scores <- scores(species_mod)$species %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Taxa")
+```
+
+
+```{r}
+ggplot() +
+   geom_text(data = Taxa_scores, aes(NMDS1, NMDS2, label = Taxa),
+            size = 4, colour = "grey") +
+geom_text(data = Site_scores, aes(NMDS1, NMDS2, label = Sample),
+            size = 4, colour = "red", fontface = "italic")
+  #geom_point(data = Site_scores, aes(NMDS1, NMDS2), size = 3)
+
+  
+  trait_mat %>%
+  vegdist() %>% 
+  hclust() %>% 
+  plot()
+  
+  
+  
+kmeans(trait_mat, centers = 4)
+
+
+
+best_trait <- useful::FitKMeans(trait_mat, max.clusters=20, nstart=25, seed=278613)
+useful::PlotHartigan(best_trait)
+
+
+trait_mat %>%
+  as.data.frame() %>% 
+  arrange(bodyLengthMax)
+```
 
 
 
@@ -842,5 +898,97 @@ plotNMDS(250)
 
 
 
+
+
+
+
+[1] "TG.omnivore"       "FM.passive"        "FM.ambush"         "FM.active"         "FM.current"        "FM.active.ambush"  "FM.cruise"        
+ [8] "TG.herbivore"      "FM.passive.ambush" "RM.broadcasting"   "RM.brooding"       "TG.detritivore"    "RM.asexual"        "VD.epipelagic"    
+[15] "VD.mesopelagic"    "VD.bathypelagic"   "TG.carnivore"      "MYE.absent"        "MYE.present"       "DVM.present"       "DVM.absent"       
+[22] "DVM.reverse"       "DVM.weak"          "DVM.strong"        "HIB.present"       "BIO.present"       "BIO.absent"  
+
+
+
+
+
+```{r}
+Trait_filt %>%
+  filter(valueType == "categorical") %>%
+  filter(traitName %in% c("feedingMode", "trophicGroup", "dielVerticalMigration")) %>% 
+  select(scientificName, traitName, traitValue) %>% 
+  arrange(scientificName)
+```
+
+
+```{r}
+Trait_filt %>%
+  pull(traitName) %>% unique()
+
+
+
+
+traits <- c(
+  "bodyLengthMax",
+  "TG.omnivore",
+  "FM.passive",
+  "FM.ambush",
+  "FM.active",
+  "FM.current",
+  "FM.active.ambush",
+  "FM.cruise",
+  "TG.herbivore",
+  "FM.passive.ambush",
+#  "RM.broadcasting",
+#  "RM.brooding",
+  "TG.detritivore",
+#  "RM.asexual",
+#  "VD.epipelagic",
+#  "VD.mesopelagic",
+#  "VD.bathypelagic",
+   "TG.carnivore"
+#  "MYE.absent",
+#  "MYE.present",
+#  "DVM.present",
+#  "DVM.absent"
+#  "DVM.reverse",
+#  "DVM.weak",
+#  "DVM.strong",
+#  "HIB.present",
+#  "BIO.present",
+#  "BIO.absent"
+)
+
+traits <- c(
+  "VD.epipelagic",
+  "VD.mesopelagic",
+  "VD.bathypelagic",
+
+  "DVM.present",
+  "DVM.absent",
+  "DVM.reverse",
+  "DVM.weak",
+  "DVM.strong"
+)
+
+traits
+
+```
+
+
+
+```{r}
+Trait_filt %>% 
+  filter(scientificName %in% useful_taxa) %>% 
+  filter(traitName == "verticalDistribution") %>% 
+  select(scientificName, traitValue) #%>% 
+  pull(traitValue) %>%  unique
+  
+
+
+
+
+
+
+```
 
 
