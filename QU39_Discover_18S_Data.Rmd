@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# 0. Prepare environment
+
+Load necessary packages and import functions.
+
+```{r}
+# Data import
+library(googledrive)
+library(readxl)
+#library(phyloseq)
+
+
+# All data format modifications and filtering and plotting
+library(tidyverse)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+source("Code/Functions.R")
+library(zoo)
+
+# Statistical tools
+library(vegan)
+
+# Specific plotting tools
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+#library(ggnewscale)
+source("Code/scales_and_themes.R")
+
+# Make sure tidyverse is the latest loaded package
+detach("package:tidyverse", unload=TRUE)
+library(tidyverse)
+```
+
+
+```{r}
+seq_depth_plot_18S <- function(data) {
+  tmp <- data %>%
+    group_by(Library_ID, Sample_type, MiSeq_library) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size)
+  
+  tmp$Index <- seq(nrow(tmp))
+  tmp %>% 
+    ggplot() +
+    geom_point(aes(Index, Library_Size, colour = Sample_type, label = Library_ID))
+}
+```
+
+
+
+
+
+
+```{r}
+# Plot ranked sequencing depth with threshold line
+All_18S_data_pr2 %>%
+  filter(is.na(Fastq_ID) == FALSE) %>%
+  filter(Sample_type != "Control")
+  seq_depth_plot() +
+  theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+ggsave("Figure_output/Sequencing_Depth_18SPR.pdf", width = 7, height = 4.5)
+
+All_18S_data_pr2 %>%
+  group_by(Library_ID, Sample_type) %>% 
+  summarise()
+
+All_18S_data_pr2
+All_18S_data_pr2 %>% 
+  pull(Sample_type) %>% unique
+
+
+# Filter out libraries under threshold line
+Good_COI_data <- All_COI_data %>% 
+  group_by(Library_ID) %>%
+  filter(Site_ID == "QU39") %>% 
+  filter(sum(Abundance)>10000) %>% 
+  ungroup()
+
+print("Median COI library size:")
+Good_COI_data %>% 
+  group_by(Library_ID) %>% 
+  summarise(SeqDepth = sum(Abundance)) %>%
+  pull(SeqDepth) %>% median
+
+print("Number of final COI libraries:")
+Good_COI_data %>% 
+  pull(Library_ID) %>% unique %>%  length
+
+
+#### NOTE: Taxonomic correction of the subgenus Ditrichocorycaeus, not yet accepted.
+Good_COI_data <- Good_COI_data %>%
+  mutate(Genus = ifelse(Genus == "Ditrichocorycaeus", "Corycaeus", Genus),
+         Species = ifelse(Species == "Ditrichocorycaeus anglicus","Corycaeus anglicus", Species))
+
+"CMIC892_NA"
+
+```

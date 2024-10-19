@@ -51,6 +51,25 @@ Plotting sequencing depth and removing low libraries for COI:
 
 
 ```{r}
+seq_depth_plot <- function(data) {
+  tmp <- data %>%
+    mutate(Sample_Type = ifelse(
+      is.na(Line_out_depth),
+      "Control",
+      "True_Sample")) %>% 
+    group_by(Library_ID, Sample_Type, MiSeq_library) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size)
+  
+  tmp$Index <- seq(nrow(tmp))
+  tmp %>% 
+    ggplot() +
+    geom_point(aes(Index, Library_Size, colour = Sample_Type, label = Library_ID))
+}
+```
+
+
+```{r}
 # Plot ranked sequencing depth with threshold line
 All_COI_data %>% 
   seq_depth_plot() +
@@ -454,6 +473,11 @@ eDNA_COI_interpolated <- eDNA_COI_indexed %>%
 
 
 ```{r}
+trait_summary_mod <- read_csv("Data_output/trait_summary_mod.csv") %>% 
+  mutate(Taxa = scientificName)
+
+trait_summary_mod
+
 # Plot dataset
 eDNA_COI_interpolated %>%
   #mutate(Taxa = factor(Taxa, levels = useful_taxa)) %>%
@@ -462,6 +486,11 @@ eDNA_COI_interpolated %>%
   geom_raster(aes(Date, Depth, fill = RA_Index)) +
   geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
   geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  
+  geom_text(data = trait_summary_mod,
+            aes(x = date("2018-07-01"), y = "0",
+                label = trophic_cluster),
+            size = 2) +
   facet_wrap("Taxa", ncol = 4) +
   #scale_y_reverse() +
   scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
@@ -476,6 +505,7 @@ eDNA_COI_interpolated %>%
         aspect.ratio = 1/4)
 
 
+  
 ggsave("./Figure_output/COI_Interpolation.pdf")
 
 ```
@@ -800,10 +830,13 @@ trait_mat <- Trait_filt %>%
   filter(traitName %in% traits) %>% 
   select(scientificName, traitName, traitValue) %>% 
   mutate(traitValue = as.numeric(traitValue)) %>% 
-  pivot_wider(names_from = traitName, values_from = traitValue) %>% 
-  mutate_all(~replace(., is.na(.), 0)) %>% 
+  pivot_wider(names_from = traitName, values_from = traitValue) %>%
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  mutate(bodyLengthMax = ifelse(bodyLengthMax == 0, 0,log(bodyLengthMax)+1)) %>% 
   column_to_rownames("scientificName") %>% 
   as.matrix()
+
+trait_mat
 ```
 
 Hierarchical clustering:
@@ -979,16 +1012,23 @@ traits
 ```{r}
 Trait_filt %>% 
   filter(scientificName %in% useful_taxa) %>% 
-  filter(traitName == "verticalDistribution") %>% 
-  select(scientificName, traitValue) #%>% 
-  pull(traitValue) %>%  unique
+  filter(traitName %in% c("trophicGroup", "bodyLengthMax", "feedingMode",
+                          "dielVerticalMigration", "verticalDistribution")) %>% 
+  select(scientificName, traitValue, traitName) %>%
+  group_by(scientificName, traitName) %>% 
+  mutate(traitValue = paste(traitValue, sep = "")) %>% 
+  pivot_wider(names_from = traitName, values_from = traitValue) %>% 
+  mutate_all(~paste(unique(.), sep = "")) %>% 
+  transmute(functional_group = paste(feedingMode, trophicGroup),
+            bodyLengthMax = as.numeric(bodyLengthMax),
+            dielVerticalMigration,
+            verticalDistribution) %>% 
+  arrange(bodyLengthMax) %>% 
+  write.csv("Data_output/trait_summary.csv")
   
-
-
-
-
-
-
+  
+  Trait_filt %>%
+    pull(traitName) %>% unique
 ```
 
 

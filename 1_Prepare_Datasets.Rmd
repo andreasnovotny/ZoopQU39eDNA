@@ -328,11 +328,41 @@ All_18S_data
 
 alt: 18S with PR2 database:
 ```{r}
+
+merge_ASV_Tax_Samp_18S <- function(Run,
+                               Taxtab,
+                               Samptab ,
+                               Group = NA) {
+  
+  Group <- ifelse(is.na(Group), Run, Group)
+  
+  ASV <- merge_ASV_Tax(Run, Taxtab) %>% 
+    pivot_longer(11:length(.), names_to = "Library_ID", values_to = "Abundance")
+  samples <- ASV %>%
+      pull(Library_ID) %>% unique()
+
+  Merged <- Samptab %>% 
+    filter(MiSeq_library == Group,
+           Library_ID %in% samples) %>% 
+    full_join(ASV, by = "Library_ID") %>%
+    filter(Library_ID != "Undetermined") %>% 
+    mutate(Library_ID = paste(Library_ID, MiSeq_library, sep = "_" ),
+           MiSeq_library = Run)
+
+}
+
+tmp <- merge_ASV_Tax("18S_QU39_3", "tax_tab_18S_pr2.RDS")
+tmp
+
+
+
+
+
 merge_18S_pr2 <- function(Run,
                       Taxtab = "tax_tab_18S_pr2.RDS",
                       Samptab = Samptab_18S_all,
                       Group = NA) {
-  merge_ASV_Tax_Samp(Run, Taxtab, Samptab, Group)
+  merge_ASV_Tax_Samp_18S(Run, Taxtab, Samptab, Group)
 }
 
 
@@ -341,10 +371,12 @@ All_18S_data_pr2 <- bind_rows(
   #merge_18S_pr2("18S_QU39_1", Group = "Home18S"), # Not relevant for this project
   #merge_18S_pr2("18S_QU39_2", Group = "Home18S"), # Not relevant for this project
   merge_18S_pr2("18S_QU39_3", Group = "Home18S"),
-  merge_18S_pr2("18S_QU39_4", Group = "Home18S")
-  #merge_18S_pr2("18S_QU39_5", Group = "Home18S"), # Not relevant for this project
-  #merge_18S_pr2("18S_QU39_6", Group = "Home18S") # Not relevant for this project
+  merge_18S_pr2("18S_QU39_4", Group = "Home18S"),
+  merge_18S_pr2("18S_QU39_5", Group = "Home18S"), # Not relevant for this project
+  merge_18S_pr2("18S_QU39_6", Group = "Home18S") # Not relevant for this project
   )
+
+All_18S_data_pr2
 
 #All_18S_data %>%
 #  seq_depth_plot() %>% 
