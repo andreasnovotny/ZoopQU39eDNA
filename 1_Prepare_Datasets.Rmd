@@ -413,6 +413,10 @@ drive_auth()
   drive_download(file.path(repo, "Hakai_Zooplankton_2013-2017_AN.rds"),
                  "Data_import/Microscopy/Hakai_Zooplankton_2013-2017_AN.rds",
                  overwrite = TRUE)
+  
+df_count_2017 <- readRDS("Data_import/Microscopy/Hakai_Zooplankton_2013-2017_AN.rds") %>% 
+  mutate(Name = Taxon) %>% 
+  separate(Taxon, sep= " ", into=c("Genus", "Tax1", "Tax2", "Tax3", "Tax4"))
 
 ```
 
@@ -421,6 +425,7 @@ The count data set from QU39, counted by DFO
 ## Summarize most important zooplankton taxa by biomass
 
 ```{r}
+
 df_count_2017 %>%
   group_by(Genus) %>% 
   summarise(Biomass = sum(Biomass))

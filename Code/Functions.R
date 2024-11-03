@@ -185,35 +185,61 @@ interpolate_rollmean <- function(data, x1, x2, y,
 
 
 
-#####
 # From ZoopMethodsComp
 
-#' Calculate and index Relative Abundances (eDNA Index).
+#' Calculate and Index Relative Abundances (eDNA Index)
 #'
 #' @description
-#' The following function will calculate relative abundance (RA) and the index
-#' of relative abundance (RA_Index) for any data set. The RA_Index is identical
-#' to eDNA Index, Double transformation, and Wisconsin transformation.
-#' This function will also handle extreme values to falls outside a given
-#' percentile. Extreme will otherwise have a big impact on the index,
-#' that is based on the population max.
+#' This function calculates relative abundance (RA) and the index of relative
+#' abundance (RA_Index) for any dataset containing ecological abundance data. The
+#' RA_Index is equivalent to the eDNA Index, double transformation, and Wisconsin 
+#' transformation methods. The function addresses extreme values by replacing them 
+#' with -1 if they fall outside a specified percentile threshold. This adjustment 
+#' helps mitigate the impact of outliers on the relative abundance calculations, 
+#' particularly when the index is based on the maximum population value.
+#'
+#' @param data (Required) A tidy data frame containing ecological data.
 #' 
-#' @param data (Required) Tidy data object.
-#' @param sample (Required) Data variable with sample ID.
-#' @param taxa (Required) Data variable with taxa ID.
-#' @param abundance (Required) Data variable with sequence read counts (raw or rarefied).
-#' @param ... (Optional) Other sample data variables to be preserved.
-#' @param na.rep (Optional) Value to replace NA in abundance variable. Default: 0.
-#' @param extreme.perc (Optional) Value defining upper percentile for extreme values. Default: 0.99. If no adjustment wanted: 1.
-#' @value Same data class as input.
+#' @param sample (Required) A variable in the data frame representing the sample 
+#' identifier. This will be used to group the data.
 #' 
-#' @example
+#' @param taxa (Required) A variable in the data frame representing the taxa 
+#' identifier. This will be used for calculating relative abundances by taxa.
+#' 
+#' @param abundance (Required) A variable in the data frame containing sequence 
+#' read counts (either raw or rarefied) for the taxa.
+#' 
+#' @param ... (Optional) Additional sample data variables to be preserved in the output.
+#' 
+#' @param na.rep (Optional) A numeric value to replace NA values in the abundance 
+#' variable. Default is 0. This allows the function to handle missing data appropriately.
+#' 
+#' @param extreme.perc (Optional) A numeric value defining the upper percentile for 
+#' identifying extreme values. Default is 0.99. If no adjustments for extreme values 
+#' are desired, set this parameter to 1.
+#' 
+#' @return A data frame of the same class as the input, including the following columns:
+#' - sample: The sample identifier.
+#' - taxa: The taxa identifier.
+#' - abundance: The total abundance count per sample and taxa.
+#' - RA: The relative abundance of each taxon per sample.
+#' - RA_Index: The indexed relative abundance, scaled to the maximum RA for each taxon.
+#' Any extreme values are indicated by a specific adjustment based on the specified 
+#' percentile.
+#' 
+#' @examples
+#' # Example usage of the index_RA function:
 #' df_18S %>% index_RA(
-#'    sample = Library_ID,
-#'    taxa = Genus,
-#'    abundance = Abundance,
-#'    Depth, Date)
-
+#'   sample = Library_ID,
+#'   taxa = Genus,
+#'   abundance = Abundance,
+#'   Depth, Date
+#' )
+#' 
+#' @import dplyr
+#' @import rlang
+#' 
+#' @export
 index_RA <- function(data, sample, taxa, abundance, ...,
                      na.rep = 0, extreme.perc = 0.99) {
   
@@ -254,6 +280,273 @@ index_RA <- function(data, sample, taxa, abundance, ...,
     select({{sample}}, ..., {{taxa}}, {{abundance}}, RA, RA_Index)
   
 }
+
+
+
+#' Rarefy Sequence Depth
+#'
+#' This function performs rarefaction of sequence data to a specified sample size,
+#' allowing for the comparison of species abundance across samples. Rarefaction is a 
+#' technique used to standardize the number of individuals sampled from each sample, 
+#' helping to mitigate the effects of sequencing depth on species diversity estimates.
+#'
+#' @param data A data frame containing the sequence data. The data frame must 
+#' contain columns for samples, taxa, and their respective abundances.
+#' 
+#' @param sample A column name in the data frame representing the sample identifier.
+#' This column will be used as the row identifier after pivoting the data.
+#' 
+#' @param taxa A column name in the data frame representing the taxa of interest.
+#' This column will be pivoted to create separate columns for each taxon.
+#' 
+#' @param abundance A column name in the data frame representing the abundance 
+#' values of each taxon in the samples. This data will be rarefied.
+#' 
+#' @param sample_size An integer specifying the target sample size for rarefaction. 
+#' Default is set to 10,000. The function will rarefy each sample to this number of 
+#' individuals. Adjust this value based on your data and analysis needs.
+#' 
+#' @return A data frame in long format that includes the original sample identifiers, 
+#' taxa, and their rarefied abundances. The data frame maintains the same taxa 
+#' and sample structure as the input but with rarefied abundance values.
+#' 
+#' @import rlang
+#' @import vegan
+#' @import tidyverse
+#' 
+#' @examples
+#' # Example usage:
+#' rarefied_data <- rarefy_sequence_depth(
+#'   data = my_data,
+#'   sample = sample_id,
+#'   taxa = taxon_name,
+#'   abundance = abundance_count,
+#'   sample_size = 5000
+#' )
+#' 
+#' @export
+
+rarefy_sequence_depth <- function(data, sample, taxa, abundance,
+                                  sample_size = 10000) {
+  
+  require(rlang)
+  require(vegan)
+  require(tidyverse)
+  
+  rarefied_data <- data %>%
+    
+    # 1. Pivot the data to wide format, where taxa become column names 
+    # and their corresponding abundance values fill these columns, filling 
+    # missing values with 0
+    select({{sample}}, {{taxa}}, {{abundance}}) %>% 
+    pivot_wider(names_from = {{taxa}}, values_from = {{abundance}},
+                values_fill = 0) %>% 
+    column_to_rownames(as_name(ensym(sample))) %>%
+    
+    # 2. Apply rarefaction to the data using the specified sample size
+    # This function will randomly subsample the abundance data to the desired depth
+    rrarefy(sample = sample_size) %>%
+    
+    # 3. Reshape the data back to long format, keeping the sample identifier 
+    # and creating columns for taxa and their abundances
+    as.data.frame() %>% 
+    rownames_to_column(as_name(ensym(sample))) %>%
+    pivot_longer(!1, names_to = as_name(ensym(taxa)),
+                 values_to = as_name(ensym(abundance))) %>%
+    
+    # 4. Join the rarefied data back with the original data to retain 
+    # other columns (excluding abundance) for further analysis
+    right_join(select(data, !{{abundance}}),
+               by = c(as_name(ensym(taxa)), as_name(ensym(sample))))
+}
+
+
+
+
+
+
+#' Convert Tidy Data to Vegan-Compatible Format
+#'
+#' @description
+#' The `tidy_to_vegan` function converts a tidy data frame into a matrix and a data frame format 
+#' suitable for use with the `vegan` package in R, allowing for analyses that
+#' require a matrix format for species abundance data, while preserving other
+#' variables for further analyses.
+#'
+#' @param data A tidy data frame containing ecological data.
+#' @param sample (Required) A variable representing sample IDs (e.g., location, time point).
+#' @param taxa (Required) A variable representing taxa identifiers (e.g., species names).
+#' @param abundance (Required) A variable representing abundance values (e.g., count data).
+#' @param ... Additional arguments that can be passed to the `select` function to retain other variables.
+#'
+#' @return A list containing:
+#'   \item{mat}{A matrix where rows correspond to samples and columns correspond to taxa, 
+#'               with abundance values filled in.}
+#'   \item{dat}{A tidy data frame that retains the selected variables including samples, taxa, 
+#'               and abundance, reshaped to wide format.}
+#'
+#' @example
+#' # Example usage of the tidy_to_vegan function
+#' result <- tidy_to_vegan(data = Indexed_UO_12S, 
+#'                          sample = Sample_ID, 
+#'                          taxa = scientificName, 
+#'                          abundance = RA_Index, 
+#'                          Month)
+#' 
+#' # Access the matrix and data frame
+#' abundance_matrix <- result$mat
+#' tidy_data <- result$dat
+#'
+#' @importFrom rlang ensym
+#' @importFrom rlang as_name
+#' @importFrom tidyr pivot_wider
+#' @importFrom dplyr select
+#' @importFrom tibble column_to_rownames
+#' @importFrom base as.matrix
+#'
+#' @export
+
+tidy_to_vegan <- function(data, sample, taxa, abundance, ...) {
+  
+  require(rlang)
+  require(tidyverse)
+  
+  mat <- data %>%
+    select({{sample}}, {{taxa}}, {{abundance}}) %>% 
+    pivot_wider(names_from = {{taxa}}, values_from = {{abundance}}) %>% 
+    column_to_rownames(as_name(ensym(sample))) %>% 
+    as.matrix()
+  
+  dat <- data %>%
+    select({{sample}}, {{taxa}}, {{abundance}}, ...) %>% 
+    pivot_wider(names_from = {{taxa}}, values_from = {{abundance}}) %>% 
+    select(!colnames(mat))
+  
+  
+  list(mat = mat,
+       dat = dat)
+}
+
+# Test
+#tmp <- Indexed_UO_12S %>% 
+#  tidy_to_vegan(Sample_ID, scientificName, RA_Index, Month, Location, Station_ID)
+#tmp$dat
+
+#' Perform Non-metric Multidimensional Scaling (NMDS) on Vegan-Compatible Data
+#'
+#' @description
+#' The `veglist_NMDS` function performs Non-metric Multidimensional Scaling (NMDS) 
+#' a list produced by the `tidy_to_vegan` function, which contains a matrix of
+#' species abundance data and associated sample metadata. This function uses the 
+#' `metaMDS` function from the `vegan` package to calculate NMDS scores for both species 
+#' and samples, enhancing the output list with NMDS results.
+#'
+#' @param veglist A list containing:
+#'   - `mat`: A matrix of species abundance data (samples as rows, species as columns).
+#'   - `dat`: A tidy data frame with sample metadata (one of the columns should match the sample IDs).
+#' @param trymax (Optional) An integer specifying the maximum number of random starts 
+#'                for the NMDS calculation. Default is 100. Higher values can help find 
+#'                better solutions but increase computation time.
+#' @param trace (Optional) A logical value indicating whether to display trace output 
+#'                from the NMDS algorithm. Default is FALSE. Setting to TRUE can help 
+#'                diagnose convergence issues.
+#'
+#' @return A list containing:
+#'   \item{mat}{The original matrix of species abundance data.}
+#'   \item{dat}{The original tidy data frame of sample metadata.}
+#'   \item{mod_nmds}{The NMDS model object produced by `metaMDS`.}
+#'   \item{species_scores}{A data frame containing NMDS scores for each species, with species names as a column.}
+#'   \item{sample_scores}{A data frame containing NMDS scores for each sample, along with associated metadata from the original data.}
+#'
+#' @example
+#' # Example usage of the veglist_NMDS function
+#' # Assuming veglist is a pre-existing list from tidy_to_vegan
+#' result <- veglist_NMDS(veglist)
+#'
+#' @export
+veglist_NMDS <- function(veglist, trymax = 100, trace = FALSE) {
+  
+  # Run NMDS
+  mod <- metaMDS(veglist$mat, trymax = trymax, trace = trace)
+  
+  Species_scores <- 
+    scores(mod)$species %>% 
+    as.data.frame() %>%
+    rownames_to_column("Species")
+  
+  Sample_scores <-
+    scores(mod)$sites %>% 
+    as.data.frame() %>%
+    rownames_to_column(colnames(veglist$dat)[1]) %>% 
+    left_join(veglist$dat, by = colnames(veglist$dat)[1])
+  
+  veglist$mod_nmds <- mod
+  veglist$species_scores <- Species_scores
+  veglist$sample_scores <- Sample_scores
+  
+  return(veglist)
+}
+
+
+## Test
+#tmp <- Indexed_UO_12S %>%
+#  filter(Month == "Aug") %>% 
+#  tidy_to_vegan(Sample_ID, scientificName, RA_Index,
+#                Month, Location) %>% 
+#  veglist_NMDS()
+
+
+#' Run SIMPER Analysis and Update Veglist
+#'
+#' @param veglist A list containing the matrix of community data and species scores.
+#' @param group (Optional) A grouping variable for comparing different groups.
+#' @return The updated veglist with species scores and SIMPER results.
+#' @examples
+#' result <- model_simper(veglist, group = "Treatment")
+#'
+#' @export
+veglist_SIMPER <- function(veglist, group = NULL) {
+  
+  # Run SIMPER analysis
+  simper_result <- if (is.null(group)) {
+    simper(veglist$mat)
+  } else {
+    simper(veglist$mat, group)
+  }
+  
+  # Summarize the SIMPER result
+  simper_summary <- summary(simper_result)
+  
+  # Error handling for multiple sample groups
+  if (length(simper_summary) > 1) {
+    stop("Error: More than two sample groups detected. Please run SIMPER without a grouping variable.")
+  }
+  
+  # Convert the summary to a data frame and clean column names
+  Simper_tab <- as.data.frame(simper_summary[[1]]) %>%
+    rownames_to_column("Species") %>%
+    rename_with(~ sub(".*\\.", "", .), -Species)  # Clean column names, excluding 'Species'
+  
+  # Add significance indicator if 'p' column exists
+  if ("p" %in% colnames(Simper_tab)) {
+    Simper_tab <- Simper_tab %>%
+      mutate(Significant = ifelse(p < 0.05, "Yes", "No"))
+  }
+  
+  # Merge the SIMPER results with species scores in the veglist
+  veglist$species_scores <- veglist$species_scores %>%
+    left_join(Simper_tab, by = "Species")  # Ensure correct merging by Species
+  
+  return(veglist)
+}
+
+# Test
+#tmp <- Indexed_UO_12S %>%
+#  filter(Month == "Aug") %>% 
+#  tidy_to_vegan(Sample_ID, scientificName, RA_Index,
+#                Month, Location, Environment) %>% 
+#  veglist_NMDS() %>% 
+#  veglist_SIMPER(group = .$dat$Environment)
 
 
 
