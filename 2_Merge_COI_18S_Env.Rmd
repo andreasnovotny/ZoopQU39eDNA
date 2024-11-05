@@ -233,7 +233,7 @@ return(abundant_taxa)
 
 ### 18S
 ```{r}
-pr2_genus <- get_taxa(pr2_18S_filtered_df, Genus, IQR_cutoff = 0.05)
+pr2_genus <- get_taxa(pr2_18S_filtered_df, Genus, IQR_cutoff = 0.01)
 pr2_Genus <- pr2_18S_filtered_df %>% 
   filter(Genus %in% pr2_genus) %>% 
   group_by(Library_ID, Taxa = Genus) %>% 
@@ -245,7 +245,7 @@ pr2_Genus <- pr2_18S_filtered_df %>%
 
 pr2_family <- pr2_18S_filtered_df %>% 
   filter(Genus %!in% pr2_genus) %>% 
-  get_taxa(Family, IQR_cutoff = 0.05)
+  get_taxa(Family, IQR_cutoff = 0.01)
 pr2_Family <- pr2_18S_filtered_df %>% 
   filter(Family %in% pr2_family) %>% 
   group_by(Library_ID, Taxa = Family) %>% 
@@ -306,7 +306,7 @@ pr2_18S_glomm_indexed <- Seq %>%
   left_join(Samp, by = "Library_ID") %>% 
   left_join(Tax, by = "Taxa")
 
-pr2_18S_glomm_indexed
+pr2_genus
 ```
 ### COI
 ```{r}
@@ -588,6 +588,8 @@ pr2_18S_glomm_indexed  %>%
 
 ## Plot some importan PP genera
 ```{r}
+
+
 tmp1 <- tmp %>% 
   filter(Genus %in% c(
     "Thalassiosira",
