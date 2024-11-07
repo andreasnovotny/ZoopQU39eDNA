@@ -45,15 +45,20 @@ Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
 Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
 
-Dataset_18S %>%
-  filter(Phylum %in% c(
-    "Chlorophyta",
-    "Cryptophyta",
-    "Dinoflagellata",
-    "Haptophyta",
-    "Ochrophyta"
-  )) %>% 
-  pull(Taxa) %>% unique()
+Dataset_18S_glom <- Dataset_18S %>%
+    filter(Phylum != "Metazoa") %>%
+#    filter(Phylum %in% c(
+#    "Chlorophyta",
+#    "Cryptophyta",
+#    "Dinoflagellata",
+#    "Haptophyta",
+#    "Ochrophyta"
+#  )) %>% 
+  #filter(is.na(Genus)==FALSE) %>% 
+  group_by(Library_ID, Sample_date, Line_out_depth, Taxa = Class) %>%
+  summarise(Abundance = sum(Abundance)) %>% 
+  index_RA(Library_ID, Taxa, Abundance, Sample_date, Line_out_depth)
+  
 ```
 
 
@@ -114,18 +119,18 @@ Interpolated_COI_Data <- smoothed_data %>%
 
 
 # Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
-complete_data <- Dataset_18S %>%
+complete_data <- Dataset_18S_glom %>%
   filter(Line_out_depth %in% c(0,5,30,100)) %>%
   mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>%
-  filter(Phylum != "Metazoa") %>%
-    filter(Phylum %in% c(
-    "Chlorophyta",
-    "Cryptophyta",
-    "Dinoflagellata",
-    "Haptophyta",
-    "Ochrophyta"
-  )) %>% 
-  filter(is.na(Genus)==FALSE) %>% 
+  #filter(Phylum != "Metazoa") %>%
+  #  filter(Phylum %in% c(
+  #  "Chlorophyta",
+  #  "Cryptophyta",
+  #  "Dinoflagellata",
+  #  "Haptophyta",
+  #  "Ochrophyta"
+  #)) %>% 
+  #filter(is.na(Genus)==FALSE) %>% 
   mutate(Sample_date = as.Date(Sample_date)) %>% 
   complete(Sample_date, Taxa, Line_out_depth, fill = list(RA_Index = 0)) %>%
   filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
@@ -232,7 +237,7 @@ correlation_data %>%
 species_matrix <- as.matrix(seasonal_data_all %>% select(-Sample_date))
 
 # Define maximum lag
-max_lag <- 2
+max_lag <- 4
 
 # Prepare an empty data frame to store results
 ccf_results <- data.frame(
@@ -273,28 +278,29 @@ for (i in 1:(ncol(species_matrix) - 1)) {
 
 ```{r}
 taxatab_18S <- Dataset_18S %>%
-  group_by(Phylum, Class, Order, Family, Genus, Species1 = Taxa) %>% 
+  group_by(Phylum, Species1 = Class) %>% 
   summarise()
 
 corr_data <- ccf_results %>%
   dplyr::filter(Species2 %in% Interpolated_COI_Data$Taxa,
          Species1 %in% Interpolated_18S_Data$Taxa) %>% 
-  filter(Max_Correlation > 0.5,
+  filter(Max_Correlation > 0.4,
          Lag_At_Max_Correlation >= 0) %>% 
   left_join(taxatab_18S, by = c("Species1"))
 
-taxatab_18S
 
 corr_data %>% 
-  filter(Class == "Bacillariophyta") %>% 
   ggplot() +
   geom_raster(aes(Species2, Species1, fill = Max_Correlation)) +
+  geom_text(aes(Species2, Species1, label = Lag_At_Max_Correlation), size = 2) +
   scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
-                       midpoint = 0.5, limit = c(0.5, 1), name = "Correlation") +
-  theme_minimal() +
-  labs(x = "Taxa 2", y = "Taxa 1", title = "Correlation between Taxa") +
+                       midpoint = 0.4, limit = c(0.4, 1), name = "Correlation") +
+  theme_minimal(8) +
+  labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   theme(aspect.ratio = 1)
+
+ggsave("Figure_output/Correlation_plot.pdf")
 
 ```
 
