@@ -243,37 +243,38 @@ pr2_Genus <- pr2_18S_filtered_df %>%
             Phylum, Class, Order, Family, Genus)
 
 
-pr2_family <- pr2_18S_filtered_df %>% 
-  filter(Genus %!in% pr2_genus) %>% 
-  get_taxa(Family, IQR_cutoff = 0.01)
-pr2_Family <- pr2_18S_filtered_df %>% 
-  filter(Family %in% pr2_family) %>% 
-  group_by(Library_ID, Taxa = Family) %>% 
-  summarise(Abundance = sum(Abundance),
-            Level = "Family",
-            Hakai_ID, Sample_date, Line_out_depth,
-            Phylum, Class, Order, Family)
+#pr2_family <- pr2_18S_filtered_df %>% 
+#  filter(Genus %!in% pr2_genus) %>% 
+#  get_taxa(Family, IQR_cutoff = 0.01)
+#pr2_Family <- pr2_18S_filtered_df %>% 
+#  filter(Family %in% pr2_family) %>% 
+#  group_by(Library_ID, Taxa = Family) %>% 
+#  summarise(Abundance = sum(Abundance),
+#            Level = "Family",
+#            Hakai_ID, Sample_date, Line_out_depth,
+#            Phylum, Class, Order, Family)
 
 
-pr2_order <- pr2_18S_filtered_df %>% 
-  filter(Genus %!in% pr2_genus,
-         Family %!in%  pr2_family) %>% 
-  get_taxa(Order, IQR_cutoff = 0.05)
-pr2_Order <- pr2_18S_filtered_df %>% 
-  filter(Order %in% pr2_family) %>% 
-  group_by(Library_ID, Taxa = Order) %>% 
-  summarise(Abundance = sum(Abundance),
-            Level = "Order",
-            Hakai_ID, Sample_date, Line_out_depth,
-            Phylum, Class, Order)
+#pr2_order <- pr2_18S_filtered_df %>% 
+#  filter(Genus %!in% pr2_genus,
+#         Family %!in%  pr2_family) %>% 
+#  get_taxa(Order, IQR_cutoff = 0.05)
+#pr2_Order <- pr2_18S_filtered_df %>% 
+#  filter(Order %in% pr2_family) %>% 
+#  group_by(Library_ID, Taxa = Order) %>% 
+#  summarise(Abundance = sum(Abundance),
+#            Level = "Order",
+#            Hakai_ID, Sample_date, Line_out_depth,
+#            Phylum, Class, Order)
 
 pr2_class <- pr2_18S_filtered_df %>% 
   filter(Genus %!in% pr2_genus,
-         Family %!in%  pr2_family,
-         Order %!in%  pr2_order) %>% 
+         #Family %!in%  pr2_family,
+         #Order %!in%  pr2_order
+         ) %>% 
   get_taxa(Class, IQR_cutoff = 0.05)
 pr2_Class <- pr2_18S_filtered_df %>% 
-  filter(Class %in% pr2_family) %>% 
+  filter(Class %in% pr2_class) %>% 
   group_by(Library_ID, Taxa = Class) %>% 
   summarise(Abundance = sum(Abundance),
             Level = "Class",
@@ -282,8 +283,8 @@ pr2_Class <- pr2_18S_filtered_df %>%
 
 
 pr2_18S_glomm <- bind_rows(pr2_Genus,
-                           pr2_Family,
-                           pr2_Order,
+                           #pr2_Family,
+                           #pr2_Order,
                            pr2_Class)
 
 

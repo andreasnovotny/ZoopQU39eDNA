@@ -646,7 +646,7 @@ Model filt with stepwise reduction
 
 Alt 2 only include selected from beginning:
 ```{r}
- Model all RELEVANT environmental parameters
+#Model all RELEVANT environmental parameters
 #mod <- cca(comm ~
 #             Temperature + Salinity + PAR + Turbidity + O2 +
 #             chla_20um + chla_3um +`chla_GF/F` + 

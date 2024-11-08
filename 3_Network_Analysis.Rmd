@@ -46,7 +46,7 @@ Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
 
 Dataset_18S_glom <- Dataset_18S %>%
-    filter(Phylum != "Metazoa") %>%
+    filter(Phylum != "Metazoa") #%>%
 #    filter(Phylum %in% c(
 #    "Chlorophyta",
 #    "Cryptophyta",
@@ -58,6 +58,22 @@ Dataset_18S_glom <- Dataset_18S %>%
   group_by(Library_ID, Sample_date, Line_out_depth, Taxa = Class) %>%
   summarise(Abundance = sum(Abundance)) %>% 
   index_RA(Library_ID, Taxa, Abundance, Sample_date, Line_out_depth)
+  
+  
+taxatab_18S <- Dataset_18S %>%
+  group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
+  summarise()
+
+Taxtab_X <- taxatab_18S %>% 
+  group_by(PhylumX = Phylum, ClassX = Class, OrderX = Order,
+           FamilyX = Family, GenusX = Genus, TaxaX = Taxa) %>% 
+  summarise()
+Taxtab_Y <- taxatab_18S %>% 
+  group_by(PhylumY = Phylum, ClassY = Class, OrderY = Order,
+           FamilyY = Family, GenusY = Genus, TaxaY = Taxa) %>% 
+  summarise()
+
+taxatab_18S
   
 ```
 
@@ -83,7 +99,7 @@ complete_data <- Dataset_COI %>%
   mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>% 
   mutate(Sample_date = as.Date(Sample_date)) %>% 
   filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
-  complete(Sample_date, Taxa, Line_out_depth, fill = list(RA_Index = 0)) %>% 
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(Abundance = 0)) %>% 
   # Ensure dates are properly ordered after completion
   arrange(Sample_date, Taxa, Line_out_depth)
 
@@ -98,11 +114,11 @@ smoothed_data <- complete_data %>%
   complete(Sample_date = strict_weekly_dates) %>%
   arrange(Sample_date) %>%
   # Interpolate missing values in RA_Index within each group
-  mutate(RA_Index = ifelse(is.na(RA_Index),
-                           na.approx(RA_Index, rule = 2, na.rm = FALSE),
-                           RA_Index)) %>%
+  mutate(Abundance = ifelse(is.na(Abundance),
+                           na.approx(Abundance, rule = 2, na.rm = FALSE),
+                           Abundance)) %>%
   # Apply 2-week rolling mean for smoothing (7-day intervals)
-  mutate(Smoothed_Relative_Abundance = rollmean(RA_Index, k = 2, fill = NA, align = "center")) %>%
+  mutate(Smoothed_Relative_Abundance = rollmean(Abundance, k = 2, fill = NA, align = "center")) %>%
   ungroup() %>%
   # Filter to include only rows with Smoothed_Relative_Abundance calculated
   filter(!is.na(Smoothed_Relative_Abundance)) %>% 
@@ -132,7 +148,7 @@ complete_data <- Dataset_18S_glom %>%
   #)) %>% 
   #filter(is.na(Genus)==FALSE) %>% 
   mutate(Sample_date = as.Date(Sample_date)) %>% 
-  complete(Sample_date, Taxa, Line_out_depth, fill = list(RA_Index = 0)) %>%
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(Abundance = 0)) %>%
   filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
   # Ensure dates are properly ordered after completion
   arrange(Sample_date, Taxa, Line_out_depth)
@@ -149,11 +165,11 @@ smoothed_data <- complete_data %>%
   complete(Sample_date = strict_weekly_dates) %>%
   arrange(Sample_date) %>%
   # Interpolate missing values in RA_Index within each group
-  mutate(RA_Index = ifelse(is.na(RA_Index),
-                           na.approx(RA_Index, rule = 2, na.rm = FALSE),
-                           RA_Index)) %>%
+  mutate(Abundance = ifelse(is.na(Abundance),
+                           na.approx(Abundance, rule = 2, na.rm = FALSE),
+                           Abundance)) %>%
   # Apply 2-week rolling mean for smoothing (7-day intervals)
-  mutate(Smoothed_Relative_Abundance = rollmean(RA_Index, k = 4, fill = NA, align = "center")) %>%
+  mutate(Smoothed_Relative_Abundance = rollmean(Abundance, k = 4, fill = NA, align = "center")) %>%
   ungroup() %>%
   # Filter to include only rows with Smoothed_Relative_Abundance calculated
   filter(!is.na(Smoothed_Relative_Abundance)) %>% 
@@ -198,7 +214,10 @@ seasonal_data_18S <- Interpolated_18S_Data %>%
 
 ### Combine
 seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date")
-seasonal_data_all
+seasonal_data_all %>% 
+  colnames()
+
+
 ```
 
 # 3. Correlation
@@ -229,15 +248,420 @@ correlation_data %>%
   theme(aspect.ratio = 1)
 ```
 
+# Correlation without lag
+
+```{r}
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+```
+
+
+
+
+```{r}
+# Define vectors for filtering
+phototrophic_plankton <- c(
+  "Chlorarachniophyceae", "Chlorodendrophyceae", "Chlorophyceae", "Mamiellophyceae", 
+  "Nephroselmidophyceae", "Pedinophyceae", "Prasino-Clade-VIII", "Pyramimonadophyceae", 
+  "Trebouxiophyceae", "Ulvophyceae", "Cryptophyceae", "Dinophyceae", "Noctilucophyceae", 
+  "Syndiniales", "Prymnesiophyceae", "Bacillariophyta", "Bolidophyceae", "Chrysophyceae", 
+  "Dictyochophyceae", "Pelagophyceae", "Phaeophyceae", "Raphidophyceae", "Perkinsida", 
+  "Prasinodermophyceae", "Florideophyceae", "Embryophyceae"
+)
+
+heterotrophic_protists <- c(
+  "Ellobiopsidae", "Gregarinomorphea", "Apusomonadidae_Group-1", "Filosa", 
+  "Filosa-Granofilosea", "Filosa-Imbricatea", "Filosa-Thecofilosea", "Phaeodarea", 
+  "Choanoflagellatea", "CONTH_7", "CONTH_8", "CONThreeP", "Cyclotrichium_like_organism", 
+  "Litostomatea", "Nassophorea", "Oligohymenophorea", "Phyllopharyngea", 
+  "Prostomatea_1", "Spirotrichea", "Ascomycota", "Basidiomycota", "Chytridiomycota", 
+  "Mucoromycota", "Haptophyta_Clade_HAP2", "Haptophyta_Clade_HAP3", "Haptophyta_Clade_HAP4", 
+  "Haptophyta_Clade_HAP5", "Planomonadida", "Katablepharidaceae", "Tubulinea", "Filasterea", 
+  "Ichthyosporea", "MOCH-1", "MOCH-3", "MOCH-4", "RAD-A", "RAD-B", "RAD-C", "Rhodelphea"
+)
+
+metazoan_zooplankton <- c(
+  "Annelida", "Arthropoda", "Brachiopoda", "Bryozoa", "Cnidaria", "Craniata", 
+  "Ctenophora", "Echinodermata", "Mollusca", "Nemertea", "Porifera", "Rotifera", 
+  "Urochordata"
+)
+
+microbial_eukaryotes <- c(
+  "Endomyxa", "Endomyxa-Phytomyxea", "Katablepharidaceae", "Hyphochytriomyceta", "Oomycota", 
+  "Pirsonia_Clade", "Polycystinea", "Acantharea", "Labyrinthulomycetes", "MAST-10", 
+  "MAST-12", "MAST-3", "MAST-4", "MAST-6", "MAST-7", "MAST-8", "MAST-9", "MAST-25", 
+  "Stramenopiles_X-Group-2", "Stramenopiles_X-Group-6"
+)
+
+marine_viruses_symbionts <- c(
+  "Picozoa_X", "Prasinodermophyceae", "Telonemia_X", "Syndiniales"
+)
+
+miscellaneous_unclassified <- c(
+  "CONThreeP", "MOCH-4", "Rhodelphea", "Filasterea"
+)
+```
+
+
+Zooplankton to Phytoplankton
+```{r}
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_COI$Taxa,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+pdf(file = "Figure_output/Corr_Plots/Zooplankton_Phytoplankton.pdf", width = 20, height = 20)
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton"
+)
+
+dev.off()
+```
+Zooplankton to Heterotrophic 
+```{r}
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_COI$Taxa,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+pdf(file = "Figure_output/Corr_Plots/Zooplankton_Microplankton.pdf", width = 20, height = 20)
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton"
+)
+
+dev.off()
+```
+Heterotrophic to phytoplankton
+```{r}
+TaxaY <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaY,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+pdf(file = "Figure_output/Corr_Plots/Microplankton_Phytoplankton.pdf", width = 20, height = 20)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton"
+)
+
+dev.off()
+```
+
+
+
+Phytoplankton
+```{r}
+TaxaY <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaX,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+pdf(file = "Figure_output/Corr_Plots/Phytoplankton.pdf", width = 20, height = 20)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton"
+)
+
+dev.off()
+```
+
+Zooplankton
+```{r}
+TaxaY <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_COI$Taxa,
+                                         colnames(correlation_matrix_all) %in% Dataset_COI$Taxa]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+pdf(file = "Figure_output/Corr_Plots/Zooplankton.pdf", width = 20, height = 20)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Zooplankton"
+)
+
+dev.off()
+```
+
+Microplankton
+```{r}
+TaxaY <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaY,
+                                         colnames(correlation_matrix_all) %in% TaxaY]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+pdf(file = "Figure_output/Corr_Plots/Microplankton.pdf", width = 20, height = 20)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Heterotrophic Protozooplankton"
+)
+
+dev.off()
+```
+
+```{r}
+
+# Example data (10x10 matrix)
+set.seed(123)
+data_matrix <- matrix(runif(100, min = 0, max = 1), nrow = 10)
+
+# Create the heatmap with a custom color scale
+pheatmap(data_matrix,
+         color = colorRampPalette(c("white", "red"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Heatmap with Custom Color Scale"
+)
+```
+
+
+
+
+
+
+
+#### OLD
+
+Phototrophic taxa only
+```{r}
+
+
+TaxaX <- taxatab_18S %>%
+  #filter(is.na(Genus) == FALSE) %>% 
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+TaxaX
+
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaX,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+correlation_matrix
+
+heatmap(correlation_matrix)
+
+hclust(as.dist(1 - correlation_matrix)) %>% plot()
+
+# Convert the correlation matrix to a tidy data frame and reorder factors
+correlation_data <- as.data.frame(as.table(correlation_matrix)) %>%
+  rename(TaxaX = Var1, TaxaY = Var2, Correlation = Freq) %>%
+  mutate(
+    TaxaX = factor(TaxaX, levels = ordered_taxa),
+    TaxaY = factor(TaxaY, levels = ordered_taxa)
+  ) %>% 
+  #filter(TaxaX != TaxaY) %>%        # Remove self-correlations
+  filter(Correlation > 0.6)     # Filter for strong correlations
+
+
+
+correlation_data %>%
+  ggplot() +
+  geom_raster(aes(TaxaX, TaxaY, fill = Correlation)) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+                       midpoint = 0.5, limit = c(0, 1), name = "Correlation") +
+  theme_minimal() +
+  labs(x = "Taxa X", y = "Taxa Y", title = "Correlation between Taxa") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+taxatab_18S %>% 
+  pull(Class) %>% unique()
+```
+
+
+
+Phytoplankton
+```{r}
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% c(phytoplankton, mixotrophs),
+                                         colnames(correlation_matrix_all) %in% c(phytoplankton, mixotrophs)]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+heatmap(correlation_matrix)
+```
+
+Zooplankton
+```{r}
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% zooplankton,
+                                         colnames(correlation_matrix_all) %in% zooplankton]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+heatmap(correlation_matrix)
+```
+
+
+
+
+
+
+
+
+
+
+
+Ochrophyta
+```{r}
+TaxaX <- taxatab_18S %>%
+  #filter(is.na(Genus) == FALSE) %>% 
+  filter(Phylum == "Dinoflagellata") %>% 
+  pull(Taxa)
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaX,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+heatmap(correlation_matrix)
+
+taxatab_18S
+```
+
+
+
+
+
+
+
+
 
 # 4. Correlation with lags
+
+
+
+```{r}
+
+```
+
+
+
+
+
 
 ```{r}
 # Define the matrix (excluding date column)
 species_matrix <- as.matrix(seasonal_data_all %>% select(-Sample_date))
-
+species_matrix
 # Define maximum lag
-max_lag <- 4
+max_lag <- 3
 
 # Prepare an empty data frame to store results
 ccf_results <- data.frame(
@@ -247,14 +671,15 @@ ccf_results <- data.frame(
   Lag_At_Max_Correlation = integer()
 )
 
+
 # Loop through each pair of species
 species_names <- colnames(species_matrix)
 for (i in 1:(ncol(species_matrix) - 1)) {
   for (j in (i + 1):ncol(species_matrix)) {
     
     # Get time series data for the two species
-    ts1 <- species_matrix[, i]
-    ts2 <- species_matrix[, j]
+    ts1 <- species_matrix[, 1]
+    ts2 <- species_matrix[, 1]
     
     # Compute cross-correlation
     ccf_result <- ccf(ts1, ts2, lag.max = max_lag, plot = FALSE)
@@ -273,14 +698,14 @@ for (i in 1:(ncol(species_matrix) - 1)) {
     ))
   }
 }
+
+ccf_results
 ```
 
 
-```{r}
-taxatab_18S <- Dataset_18S %>%
-  group_by(Phylum, Species1 = Class) %>% 
-  summarise()
+### Zoop vs Microzoo
 
+```{r}
 corr_data <- ccf_results %>%
   dplyr::filter(Species2 %in% Interpolated_COI_Data$Taxa,
          Species1 %in% Interpolated_18S_Data$Taxa) %>% 
@@ -303,5 +728,105 @@ corr_data %>%
 ggsave("Figure_output/Correlation_plot.pdf")
 
 ```
+### Phyto vs Phyto
+
+```{r}
+taxatab_18S <- Dataset_18S %>%
+  group_by(Phylum, Species1 = Class) %>% 
+  summarise()
+
+corr_data <- ccf_results %>%
+  dplyr::filter(Species2 %in% Interpolated_18S_Data$Taxa,
+         Species1 %in% Interpolated_18S_Data$Taxa) %>% 
+  filter(Max_Correlation > 0.4,
+         Lag_At_Max_Correlation >= 0) %>% 
+  left_join(taxatab_18S, by = c("Species1"))
+
+
+corr_data %>% 
+  ggplot() +
+  geom_raster(aes(Species2, Species1, fill = Max_Correlation)) +
+  geom_text(aes(Species2, Species1, label = Lag_At_Max_Correlation), size = 2) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+                       midpoint = 0.4, limit = c(0.4, 1), name = "Correlation") +
+  theme_minimal(8) +
+  labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/Correlation_plot.pdf")
+
+```
+
+```{r}
+taxatab_18S <- Dataset_18S %>%
+  group_by(Phylum, Species1 = Class) %>% 
+  summarise()
+
+corr_data <- ccf_results %>%
+  dplyr::filter(Species2 %in% Interpolated_COI_Data$Taxa,
+         Species1 %in% Interpolated_COI_Data$Taxa) %>% 
+  filter(Max_Correlation > 0.4,
+         Lag_At_Max_Correlation >= 0) %>% 
+  left_join(taxatab_18S, by = c("Species1"))
+
+
+corr_data %>% 
+  ggplot() +
+  geom_raster(aes(Species2, Species1, fill = Max_Correlation)) +
+  geom_text(aes(Species2, Species1, label = Lag_At_Max_Correlation), size = 2) +
+  scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+                       midpoint = 0.4, limit = c(0.4, 1), name = "Correlation") +
+  theme_minimal(8) +
+  labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/Correlation_plot.pdf")
+
+```
+
+
+
+
+# 5. Correlation by sample
+
+```{r}
+
+all_community_mat <- bind_rows(
+  filter(Dataset_18S, Hakai_ID %in% Dataset_COI$Hakai_ID),
+  filter(Dataset_COI, Hakai_ID %in% Dataset_COI$Hakai_ID)) %>% 
+  group_by(Hakai_ID, Taxa) %>%
+  summarize(RA = mean(RA)) %>% 
+  pivot_wider(names_from = Taxa, values_from = RA) %>% 
+  column_to_rownames("Hakai_ID") %>%
+  mutate(across(everything(), ~ replace_na(.x, 0))) %>% 
+  as.matrix()
+
+all_community_mat
+
+all_cor_matrix <- cor(all_community_mat, method = "pearson", use = "pairwise.complete.obs")
+
+cor_df <- as.data.frame(all_cor_matrix) %>%
+  rownames_to_column(var = "Taxa1") %>%
+  pivot_longer(-Taxa1, names_to = "Taxa2", values_to = "Correlation") %>%
+  filter(Taxa1 %!in% Dataset_COI$Taxa,
+         Taxa2 %!in% Dataset_18S$Taxa)
+
+cor_df %>%
+  filter(Correlation > 0.4) %>% 
+  ggplot() +
+  geom_raster(aes(Taxa2, Taxa1, fill = Correlation)) +
+  #geom_text(aes(Taxa2, Taxa1, label = Lag_At_Max_Correlation), size = 2) +
+  #scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
+  #                     midpoint = 0.4, limit = c(0.4, 1), name = "Correlation") +
+  theme_minimal(8) +
+  labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+  
+cor_df
+```
+
 
 
