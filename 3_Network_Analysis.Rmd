@@ -43,6 +43,7 @@ depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
 ```{r}
 Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
 Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
+Dataset_12S <- readRDS("Data_output/Data_merge/12S_glomm_indexed.rds")
 Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
 
 Dataset_18S_glom <- Dataset_18S %>%
@@ -75,8 +76,6 @@ Taxtab_Y <- taxatab_18S %>%
            FamilyY = Family, GenusY = Genus, TaxaY = Taxa) %>% 
   summarise()
 
-taxatab_18S
-  
 ```
 
 
@@ -131,6 +130,55 @@ Interpolated_COI_Data <- smoothed_data %>%
   summarise(Abundance = sum(Smoothed_Relative_Abundance)/4)
 ```
 
+### 12S
+
+```{r}
+
+start_date <- as.Date("2017-01-01")
+end_date <- as.Date("2019-02-15")
+
+
+# Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
+complete_data <- Dataset_12S %>%
+  filter(Line_out_depth %in% c(0,5,30,100)) %>%
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>% 
+  mutate(Sample_date = as.Date(Sample_date)) %>% 
+  #filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(Abundance = 0)) %>% 
+  # Ensure dates are properly ordered after completion
+  arrange(Sample_date, Taxa, Line_out_depth)
+
+
+#strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
+#                                to = max(complete_data$Sample_date),
+#                                by = "week")
+
+smoothed_data <- complete_data %>%
+  # Expand to include all combinations of Taxa, Depth, and weekly dates
+  group_by(Taxa, Line_out_depth) %>%
+  complete(Sample_date = strict_weekly_dates) %>%
+  arrange(Sample_date) %>%
+  # Interpolate missing values in RA_Index within each group
+  mutate(Abundance = ifelse(is.na(Abundance),
+                           na.approx(Abundance, rule = 2, na.rm = FALSE),
+                           Abundance)) %>%
+  # Apply 2-week rolling mean for smoothing (7-day intervals)
+  mutate(Smoothed_Relative_Abundance = rollmean(Abundance, k = 2, fill = NA, align = "center")) %>%
+  ungroup() %>%
+  # Filter to include only rows with Smoothed_Relative_Abundance calculated
+  filter(!is.na(Smoothed_Relative_Abundance)) %>% 
+  filter(Sample_date %in% strict_weekly_dates)
+
+Interpolated_12S_Data <- smoothed_data %>% 
+  group_by(Taxa, Sample_date) %>% 
+  summarise(Abundance = sum(Smoothed_Relative_Abundance)/4)
+
+
+
+
+```
+
+
 ### 18S
 
 ```{r}
@@ -151,15 +199,16 @@ complete_data <- Dataset_18S_glom %>%
   #filter(is.na(Genus)==FALSE) %>% 
   mutate(Sample_date = as.Date(Sample_date)) %>% 
   complete(Sample_date, Taxa, Line_out_depth, fill = list(Abundance = 0)) %>%
-  filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
+  filter(Sample_date >= start_date & Sample_date <= end_date) %>%
+  #filter(Sample_date <= end_date) %>%
   # Ensure dates are properly ordered after completion
   arrange(Sample_date, Taxa, Line_out_depth)
 
 
 # NOTE: Commented out to reuse the series for COI
-#strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
-#                                to = max(complete_data$Sample_date),
-#                                by = "week")
+strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
+                                to = max(complete_data$Sample_date),
+                                by = "week")
 
 smoothed_data <- complete_data %>%
   # Expand to include all combinations of Taxa, Depth, and weekly dates
@@ -182,6 +231,16 @@ Interpolated_18S_Data <- smoothed_data %>%
   summarise(Abundance = sum(Smoothed_Relative_Abundance)/4)
 ```
 
+```{r}
+Interpolated_COI_Data$Sample_date %>% min()
+Interpolated_COI_Data$Sample_date %>% max()
+
+Interpolated_12S_Data$Sample_date %>% min()
+Interpolated_12S_Data$Sample_date %>% max()
+
+Interpolated_18S_Data$Sample_date %>% min()
+Interpolated_18S_Data$Sample_date %>% max()
+```
 
 
 # 2. STL - Extract seasonal data
@@ -189,10 +248,12 @@ Interpolated_18S_Data <- smoothed_data %>%
 
 ### COI
 seasonal_data_COI <- Interpolated_COI_Data %>%
+  filter(Sample_date != "2017-01-08") %>%
+  
   # Extract seasonal data from STL time series, per taxa
   group_by(Taxa) %>%
   do({
-    ts_data <- ts(.$Abundance, start = c(2017, 8), frequency = 52)  # Weekly frequency
+    ts_data <- ts(.$Abundance, start = c(2017, 08), frequency = 52)  # Weekly frequency
     stl_decomposition <- stl(ts_data, s.window = "periodic")
     data.frame(Sample_date = .$Sample_date, Seasonal = stl_decomposition$time.series[, "seasonal"])
   }) %>%
@@ -206,7 +267,7 @@ seasonal_data_18S <- Interpolated_18S_Data %>%
   # Extract seasonal data from STL time series, per taxa
   group_by(Taxa) %>%
   do({
-    ts_data <- ts(.$Abundance, start = c(2017, 8), frequency = 52)  # Weekly frequency
+    ts_data <- ts(.$Abundance, start = c(2017, 15), frequency = 52)  # Weekly frequency
     stl_decomposition <- stl(ts_data, s.window = "periodic")
     data.frame(Sample_date = .$Sample_date, Seasonal = stl_decomposition$time.series[, "seasonal"])
   }) %>%
@@ -214,11 +275,31 @@ seasonal_data_18S <- Interpolated_18S_Data %>%
   spread(key = Taxa, value = Seasonal) %>%
   drop_na()
 
-### Combine
-seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date")
-seasonal_data_all %>% 
-  colnames()
 
+#### 12S
+seasonal_data_12S <- Interpolated_12S_Data %>%
+  filter(Sample_date != "2017-01-08") %>% 
+  # Extract seasonal data from STL time series, per taxa
+  group_by(Taxa) %>%
+  do({
+    ts_data <- ts(.$Abundance, start = c(2017, 08), frequency = 52)  # Weekly frequency
+    stl_decomposition <- stl(ts_data, s.window = "periodic")
+    data.frame(Sample_date = .$Sample_date, Seasonal = stl_decomposition$time.series[, "seasonal"])
+  }) %>%
+  ungroup() %>%
+  spread(key = Taxa, value = Seasonal) %>%
+  drop_na()
+
+
+start_date <- as.Date("2017-01-15")
+end_date <- as.Date("2019-01-13")
+
+### Combine
+seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date") %>%
+  left_join(seasonal_data_12S, by = "Sample_date") %>% 
+  filter(Sample_date >= start_date & Sample_date <= end_date)
+seasonal_data_all
+  
 
 ```
 
@@ -256,6 +337,7 @@ Correlation without lag
 
 ```{r}
 correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+correlation_matrix_all %>% colnames()
 ```
 
 
@@ -584,6 +666,35 @@ pheatmap(correlation_matrix,
 dev.off()
 ```
 
+
+## Fish
+```{r}
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_12S$Taxa,
+                                         colnames(correlation_matrix_all) %in% Dataset_12S$Taxa]
+correlation_matrix
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+pdf(file = "Figure_output/Corr_Plots/Mesozooplankton.pdf", width = 20, height = 20)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Mesozooplankton Clusters - No Lagg"
+)
+
+dev.off()
+```
+
+
 ## Microplankton
 ```{r}
 TaxaY <- taxatab_18S %>%
@@ -618,6 +729,437 @@ pheatmap(correlation_matrix,
 
 dev.off()
 ```
+
+
+# Seasonal Clusters
+
+
+## Phytoplankton
+
+```{r}
+set.seed(200)
+
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaX,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+
+
+
+# Sample code to perform K-means clustering on a correlation matrix
+
+# Assuming `correlation_matrix` is your correlation matrix:
+# Step 1: Convert the correlation matrix to a dissimilarity matrix
+# Using 1 - correlation to represent distance
+dissimilarity_matrix <- 1 - correlation_matrix
+
+# Step 2: Choose the number of clusters (k)
+# Let's assume you want 3 clusters (you can experiment with other values of k)
+k <- 7
+
+# Step 3: Perform K-means clustering
+# Run K-means on the transformed dissimilarity matrix
+# Use the `as.dist` function to treat it as a distance matrix
+kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
+
+# Step 4: Check the results
+# Cluster assignment for each variable
+cluster_df <- tibble(
+  Taxa = names(kmeans_result$cluster),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+
+
+library(cluster)
+
+# Compute silhouette values for different k
+silhouette_scores <- vector("numeric", length = 10)
+for (i in 2:10) {  # k = 1 is not meaningful for silhouette analysis
+  kmeans_result <- kmeans(correlation_matrix, centers = i)
+  silhouette_scores[i] <- mean(silhouette(kmeans_result$cluster, dist(correlation_matrix))[, 3])
+}
+
+# Plot silhouette scores
+plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
+     xlab = "Number of clusters", ylab = "Average Silhouette Score")
+
+
+
+
+
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton Clusters - No Lagg"
+)
+
+
+plot_cluster <- function(cluster) {
+  
+  seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>%
+  left_join(cluster_df, by = "Taxa") %>% 
+  filter(Cluster == cluster) %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Abundance)) +
+  facet_wrap("Taxa", scales = "free")
+  
+  
+}
+```
+
+
+```{r}
+plot_cluster(1)
+plot_cluster(2)
+plot_cluster(3)
+plot_cluster(4)
+plot_cluster(5)
+plot_cluster(6)
+plot_cluster(7)
+```
+
+
+## Protozooplankton
+
+```{r}
+set.seed(200)
+
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% TaxaX,
+                                         colnames(correlation_matrix_all) %in% TaxaX]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+# Sample code to perform K-means clustering on a correlation matrix
+
+# Assuming `correlation_matrix` is your correlation matrix:
+# Step 1: Convert the correlation matrix to a dissimilarity matrix
+# Using 1 - correlation to represent distance
+dissimilarity_matrix <- 1 - correlation_matrix
+
+# Step 2: Choose the number of clusters (k)
+# Let's assume you want 3 clusters (you can experiment with other values of k)
+k <- 6
+
+# Step 3: Perform K-means clustering
+# Run K-means on the transformed dissimilarity matrix
+# Use the `as.dist` function to treat it as a distance matrix
+kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
+
+# Step 4: Check the results
+# Cluster assignment for each variable
+cluster_df <- tibble(
+  Taxa = names(kmeans_result$cluster),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+
+
+library(cluster)
+
+# Compute silhouette values for different k
+silhouette_scores <- vector("numeric", length = 10)
+for (i in 2:10) {  # k = 1 is not meaningful for silhouette analysis
+  kmeans_result <- kmeans(correlation_matrix, centers = i)
+  silhouette_scores[i] <- mean(silhouette(kmeans_result$cluster, dist(correlation_matrix))[, 3])
+}
+
+# Plot silhouette scores
+plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
+     xlab = "Number of clusters", ylab = "Average Silhouette Score")
+
+
+
+
+
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton Clusters - No Lagg"
+)
+
+
+plot_cluster <- function(cluster) {
+  
+  seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>%
+  left_join(cluster_df, by = "Taxa") %>% 
+  filter(Cluster == cluster) %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Abundance)) +
+  facet_wrap("Taxa", scales = "free")
+  
+  
+}
+```
+
+
+```{r}
+plot_cluster(1)
+plot_cluster(2)
+plot_cluster(3)
+plot_cluster(4)
+plot_cluster(5)
+plot_cluster(6)
+```
+
+## Zooplankton
+
+```{r}
+set.seed(200)
+
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+
+TaxaX <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_COI$Taxa,
+                                         colnames(correlation_matrix_all) %in% Dataset_COI$Taxa]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+# Sample code to perform K-means clustering on a correlation matrix
+
+# Assuming `correlation_matrix` is your correlation matrix:
+# Step 1: Convert the correlation matrix to a dissimilarity matrix
+# Using 1 - correlation to represent distance
+dissimilarity_matrix <- 1 - correlation_matrix
+
+# Step 2: Choose the number of clusters (k)
+# Let's assume you want 3 clusters (you can experiment with other values of k)
+k <- 6
+
+# Step 3: Perform K-means clustering
+# Run K-means on the transformed dissimilarity matrix
+# Use the `as.dist` function to treat it as a distance matrix
+kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
+
+# Step 4: Check the results
+# Cluster assignment for each variable
+cluster_df <- tibble(
+  Taxa = names(kmeans_result$cluster),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+
+
+library(cluster)
+
+# Compute silhouette values for different k
+silhouette_scores <- vector("numeric", length = 10)
+for (i in 2:10) {  # k = 1 is not meaningful for silhouette analysis
+  kmeans_result <- kmeans(correlation_matrix, centers = i)
+  silhouette_scores[i] <- mean(silhouette(kmeans_result$cluster, dist(correlation_matrix))[, 3])
+}
+
+# Plot silhouette scores
+plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
+     xlab = "Number of clusters", ylab = "Average Silhouette Score")
+
+
+
+
+
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton Clusters - No Lagg"
+)
+
+
+plot_cluster <- function(cluster) {
+  
+  seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>%
+  left_join(cluster_df, by = "Taxa") %>% 
+  filter(Cluster == cluster) %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Abundance)) +
+  facet_wrap("Taxa", scales = "free")
+  
+  
+}
+```
+
+
+```{r}
+plot_cluster(1)
+plot_cluster(2)
+plot_cluster(3)
+plot_cluster(4)
+plot_cluster(5)
+plot_cluster(6)
+```
+
+
+## Fish
+
+```{r}
+set.seed(200)
+
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+
+
+
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_12S$Taxa,
+                                         colnames(correlation_matrix_all) %in% Dataset_12S$Taxa]
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+
+# Sample code to perform K-means clustering on a correlation matrix
+
+# Assuming `correlation_matrix` is your correlation matrix:
+# Step 1: Convert the correlation matrix to a dissimilarity matrix
+# Using 1 - correlation to represent distance
+dissimilarity_matrix <- 1 - correlation_matrix
+
+# Step 2: Choose the number of clusters (k)
+# Let's assume you want 3 clusters (you can experiment with other values of k)
+k <- 9
+
+# Step 3: Perform K-means clustering
+# Run K-means on the transformed dissimilarity matrix
+# Use the `as.dist` function to treat it as a distance matrix
+kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
+
+# Step 4: Check the results
+# Cluster assignment for each variable
+cluster_df <- tibble(
+  Taxa = names(kmeans_result$cluster),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+
+
+library(cluster)
+
+# Compute silhouette values for different k
+silhouette_scores <- vector("numeric", length = 10)
+for (i in 2:10) {  # k = 1 is not meaningful for silhouette analysis
+  kmeans_result <- kmeans(correlation_matrix, centers = i)
+  silhouette_scores[i] <- mean(silhouette(kmeans_result$cluster, dist(correlation_matrix))[, 3])
+}
+
+# Plot silhouette scores
+plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
+     xlab = "Number of clusters", ylab = "Average Silhouette Score")
+
+
+
+
+
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Phytoplankton Clusters - No Lagg"
+)
+
+
+plot_cluster <- function(cluster) {
+  
+  seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>%
+  left_join(cluster_df, by = "Taxa") %>% 
+  filter(Cluster == cluster) %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Abundance)) +
+  facet_wrap("Taxa", scales = "free")
+  
+  
+}
+```
+
+
+```{r}
+plot_cluster(1)
+plot_cluster(2)
+plot_cluster(3)
+plot_cluster(4)
+plot_cluster(5)
+plot_cluster(6)
+plot_cluster(7)
+plot_cluster(8)
+plot_cluster(9)
+```
+
+
+```{r}
+seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>%
+  left_join(cluster_df, by = "Taxa") %>% 
+  filter(Cluster == 1) %>%
+  pull(Taxa) %>% unique()
+```
+
+
+
+
+# Plot Seasonality
+
+```{r}
+
+  
+  
+seasonal_data_all %>% 
+  pivot_longer(!Sample_date, names_to = "Taxa", values_to = "Abundance") %>% 
+  filter(Taxa %in% omnivorous_filter_feeding_zooplankton) %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Abundance)) +
+  facet_wrap("Taxa", scales = "free")
+```
+
+
 
 
 # ___OLD CODE___

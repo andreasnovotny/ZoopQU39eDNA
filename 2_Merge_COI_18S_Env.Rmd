@@ -356,6 +356,88 @@ COI_glomm_indexed <- Seq %>%
 
 ```
 
+## 12S 
+
+
+```{r}
+species_12S <- Good_12S_QU39 %>% 
+  get_taxa(Species, IQR_cutoff = 0.001)
+
+Species_12S <- Good_12S_QU39 %>%
+  filter(Species %in% species_12S) %>%
+  group_by(Library_ID, Taxa = Species) %>% 
+  summarise(Abundance = sum(Abundance),
+            Level = "Species",
+            Hakai_ID, Sample_date, Line_out_depth,
+            Class, Genus, Species)
+
+Species_12S
+
+Seq <- Species_12S %>% 
+  group_by(Library_ID, Taxa) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  index_RA(Library_ID, Taxa, Abundance)
+
+
+Samp <- Species_12S %>% 
+  group_by(Library_ID, Hakai_ID, Sample_date, Line_out_depth) %>% 
+  summarise()
+
+Tax <- Species_12S %>% 
+  group_by(Taxa, Class, Genus) %>% 
+  summarise()
+
+glomm_indexed_12S <- Seq %>% 
+  left_join(Samp, by = "Library_ID") %>% 
+  left_join(Tax, by = "Taxa")
+
+glomm_indexed_12S
+
+```
+
+
+
+```{r}
+
+
+
+COI_genus <- COI_filtered_df %>%
+  filter(Species %!in% COI_species) %>% 
+  get_taxa(Genus, IQR_cutoff = 0.00)
+COI_Genus <- COI_filtered_df %>% 
+  filter(Genus %in% COI_genus) %>% 
+  group_by(Library_ID, Taxa = Genus) %>% 
+  summarise(Abundance = sum(Abundance),
+            Level = "Genus",
+            Hakai_ID, Sample_date, Line_out_depth,
+            Phylum, Class, Order, Family, Genus)
+
+
+COI_glomm <- bind_rows(COI_Species,
+                           COI_Genus)
+
+Seq <- COI_glomm %>% 
+  group_by(Library_ID, Taxa) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  index_RA(Library_ID, Taxa, Abundance)
+
+
+Samp <- COI_glomm %>% 
+  group_by(Library_ID, Hakai_ID, Sample_date, Line_out_depth) %>% 
+  summarise()
+
+Tax <- COI_glomm %>% 
+  group_by(Taxa, Phylum, Class, Order, Family, Genus) %>% 
+  summarise()
+
+COI_glomm_indexed <- Seq %>% 
+  left_join(Samp, by = "Library_ID") %>% 
+  left_join(Tax, by = "Taxa")
+```
+
+
+
+
 # 4. Environmental data
 
 Get list of samples
@@ -482,6 +564,7 @@ bottle_file <- niskin %>%
 ```{r}
 saveRDS(pr2_18S_glomm_indexed, "Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 saveRDS(COI_glomm_indexed, "Data_output/Data_merge/COI_glomm_indexed.rds")
+saveRDS(glomm_indexed_12S, "Data_output/Data_merge/12S_glomm_indexed.rds")
 saveRDS(bottle_file, "Data_output/Data_merge/bottle_file.rds")
 ```
 

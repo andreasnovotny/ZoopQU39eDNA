@@ -118,6 +118,31 @@ rm(Library_metadata_Andreas, qu39DNA_metadata)
 Samptab_18S_all
 ```
 
+## 12S metadata
+
+
+
+Reading in in 12S metadata:
+
+```{r}
+Samptab_12S_all <-read_excel("Data_import/metadata_files/Library_metadata_all.xlsx", 
+    sheet = "12S", col_types = c("text", 
+        "text", "date", "text", "text", "text", 
+        "text", "date", "date", "numeric", 
+        "text", "text", "text", "text", "text", 
+        "text", "text", "text", "text", "text", 
+        "text", "numeric", "text", "text", 
+        "numeric", "numeric", "text", "text", 
+        "text", "text", "numeric", "numeric", 
+        "skip"))
+Samptab_12S_all
+write_csv2(Samptab_COI_all, "Data_import/metadata_files/sample_data_12S_all.csv")
+
+
+
+```
+
+
 # 2. General merging functions:
 
 Here follows a set of functions defined for modifying and merging different datatypes.
@@ -390,10 +415,69 @@ All_18S_data_pr2
 #  filter(Project_name == "QU39")
 
 ```
+# 5. Merge 12S data
+
+
+```{r}
+# Import downloaded rds (compact r data) files
+ASVsp_12S_2017 <- read_csv("Data_import/12S/MiFish-E_species_table_2017.csv")
+ASVsp_12S_2016 <- read_csv("Data_import/12S/MiFish-E_species_table_2016.csv")
+Samptab_12S <- readRDS("Data_import/12S/Samptab_12S.rds")
+Samptab_12S_all
+
+
+ASVsp_12S_2017
+
+```
+
+
+```{r}
+# Combine the three components to a tidy data tibble
+df_12S_2017 <- ASVsp_12S_2017 %>%
+  pivot_longer(!1:5,  names_to = "Library_ID", values_to = "Abundance") %>% 
+  left_join(Samptab_12S_all, by = "Library_ID")
+
+df_12S_QU39 <- ASVsp_12S_2016 %>%
+  pivot_longer(!1:5,  names_to = "Library_ID", values_to = "Abundance") %>% 
+  left_join(Samptab_12S_all, by = "Library_ID") %>% 
+  bind_rows(df_12S_2017)
+df_12S_QU39$Sample_type
+
+
+# Plot Sequencing depth per library, 
+tmp <- df_12S_QU39 %>%
+    group_by(Library_ID, Sample_type) %>% 
+    summarise(Library_Size = sum(Abundance)) %>% 
+    arrange(Library_Size) %>% 
+  filter(is.na(Sample_type) == FALSE)
+  tmp$Index <- seq(nrow(tmp))
+  tmp %>%
+    ggplot() +
+    geom_point(aes(Index, Library_Size, colour = Sample_type, label = Library_ID)) +
+    theme_cowplot(12) +
+  theme(aspect.ratio = 1,
+        strip.background =element_blank()) +
+  geom_abline(intercept = 10000, linetype = 4)
+
+# Filter small and bad libraries
+Good_12S_QU39 <- df_12S_QU39 %>%
+    group_by(Library_ID, Sample_type) %>% 
+    filter(sum(Abundance)>10000) %>%
+  ungroup() %>% 
+  # Modify taxonomic names to align
+  filter(Group %!in% c("zMultiple", "Total")) %>% 
+  mutate(Taxa = paste(Genus, Species)) %>% 
+  select(Library_ID, Hakai_ID = `Hakai ID`, Sample_date, Site_ID, Line_out_depth,
+         Class = Group, Genus, Species = Taxa, Taxa, Abundance)
+
+Good_12S_QU39
+```
 
 
 
-# 5. Microscopy data
+
+
+# 6. Microscopy data
 
 The flowing code will download the needed data sets from Google Drive server and put them in the Data_import directory. Only has to be run once after cloning this directory.
 
@@ -478,3 +562,23 @@ personel %>%
   arrange(-Days_Extracted)
   
 ```
+
+
+
+```{r}
+# Import downloaded rds (compact r data) files
+ASVsp_12S_2017 <- read_csv("Data_import/12S/MiFish-E_species_table_2017.csv")
+Samptab_12S <- readRDS("Data_import/12S/Samptab_12S.rds")
+
+Samptab_12S
+
+
+# Combine the three components to a tidy data tibble
+df_12S_2017 <- ASVsp_12S_2017 %>%
+  pivot_longer(!1:5,  names_to = "Library_ID", values_to = "Abundance") %>% 
+  full_join(Samptab_12S, by = "Library_ID")
+
+
+df_12S_2017
+```
+
