@@ -45,20 +45,6 @@ Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
 Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 Dataset_12S <- readRDS("Data_output/Data_merge/12S_glomm_indexed.rds")
 Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
-
-Dataset_18S_glom <- Dataset_18S %>%
-    filter(Phylum != "Metazoa") #%>%
-#    filter(Phylum %in% c(
-#    "Chlorophyta",
-#    "Cryptophyta",
-#    "Dinoflagellata",
-#    "Haptophyta",
-#    "Ochrophyta"
-#  )) %>% 
-  #filter(is.na(Genus)==FALSE) %>% 
-  group_by(Library_ID, Sample_date, Line_out_depth, Taxa = Class) %>%
-  summarise(Abundance = sum(Abundance)) %>% 
-  index_RA(Library_ID, Taxa, Abundance, Sample_date, Line_out_depth)
   
   
 taxatab_18S <- Dataset_18S %>%
@@ -248,7 +234,6 @@ Interpolated_18S_Data$Sample_date %>% max()
 
 ### COI
 seasonal_data_COI <- Interpolated_COI_Data %>%
-  filter(Sample_date != "2017-01-08") %>%
   
   # Extract seasonal data from STL time series, per taxa
   group_by(Taxa) %>%
@@ -298,7 +283,8 @@ end_date <- as.Date("2019-01-13")
 seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date") %>%
   left_join(seasonal_data_12S, by = "Sample_date") %>% 
   filter(Sample_date >= start_date & Sample_date <= end_date)
-seasonal_data_all
+seasonal_data_all %>% 
+  colnames()
   
 
 ```
@@ -308,29 +294,9 @@ seasonal_data_all
 ### a. Without lags
 ```{r}
 
-correlation_matrix <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
-
-correlation_matrix
-
-# Convert the correlation matrix to a tidy data frame
-correlation_data <- as.data.frame(as.table(correlation_matrix)) %>%
-  rename(Taxa1 = Var1, Taxa2 = Var2, Correlation = Freq) %>%
-  filter(Taxa1 != Taxa2) %>%        # Remove self-correlations
-  filter(Correlation > 0.5) %>%     # Filter for strong correlations
-  filter(Taxa1 %in% Interpolated_COI_Data$Taxa,
-         Taxa2 %in% Interpolated_18S_Data$Taxa)
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
 
 
-
-correlation_data %>% 
-  ggplot() +
-  geom_raster(aes(Taxa1, Taxa2, fill = Correlation)) +
-  scale_fill_gradient2(low = "red", high = "blue", mid = "white", 
-                       midpoint = 0, limit = c(-1, 1), name = "Correlation") +
-  theme_minimal() +
-  labs(x = "Taxa 2", y = "Taxa 1", title = "Correlation between Taxa") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  theme(aspect.ratio = 1)
 ```
 
 Correlation without lag
@@ -347,11 +313,12 @@ correlation_matrix_all %>% colnames()
 ```{r}
 species_matrix <- as.matrix(seasonal_data_all %>% select(-Sample_date))
 
-species_matrix
+
 
 # Initialize results data frame
 results <- data.frame(Species1 = character(), Species2 = character(),
                       Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
+
 max_lag <- 3
 
 for (i in 1:(ncol(species_matrix))) {
@@ -370,8 +337,8 @@ for (i in 1:(ncol(species_matrix))) {
       
       # Store only significant correlations if they meet the threshold
       if (!is.na(max_corr) && abs(max_corr) > 0.5) {
-        results <- rbind(results, data.frame(Species1 = species_names[i],
-                                             Species2 = species_names[j],
+        results <- rbind(results, data.frame(Species1 = colnames(species_matrix)[i],
+                                             Species2 = colnames(species_matrix)[j],
                                              Max_Correlation = max_corr,
                                              Lag = lag_at_max_corr))
       }
@@ -379,17 +346,126 @@ for (i in 1:(ncol(species_matrix))) {
   }
 }
 
-results
+results %>% 
+  pull(Species1) %>%  unique()
 
 # Create an adjacency matrix based on significant correlations
 adj_matrix <- with(results, {
-  mat <- matrix(0, ncol = length(species_names), nrow = length(species_names),
-                dimnames = list(species_names, species_names))
+  mat <- matrix(0, ncol = length(colnames(species_matrix)), nrow = length(colnames(species_matrix)),
+                dimnames = list(colnames(species_matrix), colnames(species_matrix)))
   for (k in 1:nrow(results)) {
     mat[results$Species1[k], results$Species2[k]] <- results$Max_Correlation[k]
   }
   return(mat)
 })
+
+lag_matrix <- with(results, {
+  mat <- matrix(0, ncol = length(colnames(species_matrix)), nrow = length(colnames(species_matrix)),
+                dimnames = list(colnames(species_matrix), colnames(species_matrix)))
+  for (k in 1:nrow(results)) {
+    mat[results$Species1[k], results$Species2[k]] <- results$Lag[k]
+  }
+  return(mat)
+})
+lag_matrix
+```
+
+
+
+
+## function for testing specific lags
+
+
+```{r}
+pw_ccf <- function(mat, predator, prey, max_lag = 3, min_corr = -1) {
+  # Initialize results data frame
+  results <- data.frame(Predator = character(), Prey = character(),
+                        Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
+  
+  # Loop through each predator-prey pair
+  for (pred in predator) {
+    for (prey_taxa in prey) {
+      ts_pred <- mat[, pred]
+      ts_prey <- mat[, prey_taxa]
+      
+      # Compute cross-correlation without plotting
+      ccf_result <- ccf(ts_prey, ts_pred, lag.max = max_lag, plot = FALSE)
+      
+      # Check for valid cross-correlation values
+      if (!is.null(ccf_result$acf) && length(ccf_result$acf) > 0 && !all(is.na(ccf_result$acf))) {
+        max_corr_idx <- which.max(abs(ccf_result$acf))
+        max_corr <- ccf_result$acf[max_corr_idx]
+        lag_at_max_corr <- ccf_result$lag[max_corr_idx]
+        
+        # Filter for significant correlations and relevant lags
+        if (!is.na(max_corr) && lag_at_max_corr <= 0) {
+          results <- rbind(results, data.frame(Predator = pred, Prey = prey_taxa,
+                                               Max_Correlation = max_corr, Lag = lag_at_max_corr))
+        }
+      }
+    }
+  }
+  
+  return(results)
+}
+
+
+
+
+
+```
+
+ZP - PZP
+```{r}
+Prey <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+output_cff <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
+
+
+matrix_results <- output_cff %>%
+  select(Predator, Prey, Max_Correlation) %>%
+  pivot_wider(names_from = Predator, values_from = Max_Correlation) %>%
+  column_to_rownames(var = "Prey") %>% 
+  as.matrix() %>% 
+  t()
+matrix_results[is.na(matrix_results)] <- 0
+
+
+pheatmap(matrix_results,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Metazooplankton - Phytoplankon lagged interactions"
+)
+```
+
+
+
+
+
+
+
+
+
+
+
+ZP - PZP
+```{r}
+Prey <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+output_cff <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey)
+output_cff
+
+
+output_cff
 ```
 
 
@@ -439,8 +515,6 @@ omnivorous_filter_feeding_zooplankton <- c(
 
 
 
-
-
 microbial_eukaryotes <- c(
   "Endomyxa", "Endomyxa-Phytomyxea", "Katablepharidaceae", "Hyphochytriomyceta", "Oomycota", 
   "Pirsonia_Clade", "Polycystinea", "Acantharea", "Labyrinthulomycetes", "MAST-10", 
@@ -459,10 +533,37 @@ miscellaneous_unclassified <- c(
 Dataset_COI$Taxa %>% unique()
 
 
+pelagic_fish <- c(
+  "Alosa sapidissima", "Ammodytes personatus", "Anoplopoma fimbria", 
+  "Boreogadus saida", "Clupea pallasii", "Diaphus theta", 
+  "Engraulis mordax", "Gasterosteus aculeatus", "Mallotus villosus", 
+  "Merluccius productus", "Oncorhynchus gorbuscha", "Oncorhynchus keta", 
+  "Oncorhynchus kisutch", "Oncorhynchus nerka", "Oncorhynchus tshawytscha", 
+  "Osmerus mordax", "Sardinops sagax", "Stenobrachius leucopsarus", 
+  "Stenobrachius nannochir", "Thaleichthys pacificus", "Zaprora silenus"
+)
 ```
 
 
 # 5. PLot Heatmaps
+
+```{r}
+results %>% 
+  filter(Max_Correlation > 0.,
+         Lag >= 0) %>%
+  filter(Species2 == "Centropages abdominalis",
+         Species1 %in% heterotrophic_protists)
+  
+
+```
+
+
+
+
+
+
+
+
 
 ## Zooplankton to Phytoplankton
 ```{r}
@@ -570,8 +671,8 @@ TaxaX <- taxatab_18S %>%
   filter(Class %in% phototrophic_plankton) %>% 
   pull(Taxa) %>% unique()
 
-correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% carnivorous_zooplankton,
-                                         colnames(correlation_matrix_all) %in% omnivorous_filter_feeding_zooplankton]
+correlation_matrix <- adj_matrix[rownames(adj_matrix) %in% carnivorous_zooplankton,
+                                         colnames(adj_matrix) %in% omnivorous_filter_feeding_zooplankton]
 
 # Perform hierarchical clustering on the correlation matrix
 correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
@@ -592,7 +693,43 @@ pheatmap(correlation_matrix,
 )
 
 dev.off()
+
+
 ```
+
+
+
+## Fish to Zooplankton
+```{r}
+adj_matrix
+
+correlation_matrix <- adj_matrix[rownames(adj_matrix) %in% pelagic_fish,
+                                         colnames(adj_matrix) %in% Dataset_COI$Taxa]
+colnames(adj_matrix) %in% pelagic_fish
+correlation_matrix
+pelagic_fish
+
+# Perform hierarchical clustering on the correlation matrix
+correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
+taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
+ordered_taxa <- rownames(correlation_matrix)[taxa_order]
+
+pdf(file = "Figure_output/Corr_Plots/Fish_Mesozooplankton.pdf", width = 10, height = 10)
+# Create the heatmap with a custom color scale
+pheatmap(correlation_matrix,
+         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         #cluster_rows = TRUE,
+         #cluster_cols = TRUE,
+         #legend = TRUE,
+         main = "Pelagic Fish to Metazooplankton Lagged Interactions"
+)
+
+dev.off()
+```
+
 
 ## Phytoplankton
 ```{r}
@@ -670,15 +807,15 @@ dev.off()
 ## Fish
 ```{r}
 
-correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_12S$Taxa,
-                                         colnames(correlation_matrix_all) %in% Dataset_12S$Taxa]
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% pelagic_fish,
+                                         colnames(correlation_matrix_all) %in% pelagic_fish]
 correlation_matrix
 # Perform hierarchical clustering on the correlation matrix
 correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
 taxa_order <- hclust(as.dist(1 - correlation_matrix))$order
 ordered_taxa <- rownames(correlation_matrix)[taxa_order]
 
-pdf(file = "Figure_output/Corr_Plots/Mesozooplankton.pdf", width = 20, height = 20)
+pdf(file = "Figure_output/Corr_Plots/Fish.pdf", width = 20, height = 20)
 # Create the heatmap with a custom color scale
 pheatmap(correlation_matrix,
          color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
@@ -688,7 +825,7 @@ pheatmap(correlation_matrix,
          #cluster_rows = TRUE,
          #cluster_cols = TRUE,
          #legend = TRUE,
-         main = "Mesozooplankton Clusters - No Lagg"
+         main = "Fish Clusters - No Lagg"
 )
 
 dev.off()
@@ -1043,8 +1180,8 @@ correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = 
 
 
 
-correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% Dataset_12S$Taxa,
-                                         colnames(correlation_matrix_all) %in% Dataset_12S$Taxa]
+correlation_matrix <- correlation_matrix_all[rownames(correlation_matrix_all) %in% pelagic_fish,
+                                         colnames(correlation_matrix_all) %in% pelagic_fish]
 
 # Perform hierarchical clustering on the correlation matrix
 correlation_matrix[is.na(correlation_matrix) | is.nan(correlation_matrix) | is.infinite(correlation_matrix)] <- 0
@@ -1061,7 +1198,7 @@ dissimilarity_matrix <- 1 - correlation_matrix
 
 # Step 2: Choose the number of clusters (k)
 # Let's assume you want 3 clusters (you can experiment with other values of k)
-k <- 9
+k <- 6
 
 # Step 3: Perform K-means clustering
 # Run K-means on the transformed dissimilarity matrix
@@ -1095,8 +1232,8 @@ plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
 
 
 pheatmap(correlation_matrix,
-         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
-         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+         #color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+         #breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
          show_rownames = TRUE,
          show_colnames = TRUE,
          #cluster_rows = TRUE,
@@ -1128,9 +1265,6 @@ plot_cluster(3)
 plot_cluster(4)
 plot_cluster(5)
 plot_cluster(6)
-plot_cluster(7)
-plot_cluster(8)
-plot_cluster(9)
 ```
 
 
