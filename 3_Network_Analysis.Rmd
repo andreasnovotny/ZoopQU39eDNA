@@ -411,62 +411,78 @@ pw_ccf <- function(mat, predator, prey, max_lag = 3, min_corr = -1) {
 
 
 
+pw_ccf_plot <- function(...) {
+
+  output_cff <- pw_ccf(...)
+  
+  matrix_results <- output_cff %>%
+    select(Predator, Prey, Max_Correlation) %>%
+    pivot_wider(names_from = Predator, values_from = Max_Correlation) %>%
+    column_to_rownames(var = "Prey") %>% 
+    as.matrix() %>% 
+    t()
+  matrix_results[is.na(matrix_results)] <- 0
+  
+  
+  pheatmap(matrix_results,
+           color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+           breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+           show_rownames = TRUE,
+           show_colnames = TRUE,
+           cluster_rows = TRUE,
+           cluster_cols = TRUE,
+           legend = TRUE
+  )
+}
+
+
 
 
 ```
 
-ZP - PZP
+### ZP - PZP
 ```{r}
 Prey <- taxatab_18S %>%
   filter(Class %in% heterotrophic_protists) %>% 
   pull(Taxa) %>% unique()
 
-output_cff <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
-
-
-matrix_results <- output_cff %>%
-  select(Predator, Prey, Max_Correlation) %>%
-  pivot_wider(names_from = Predator, values_from = Max_Correlation) %>%
-  column_to_rownames(var = "Prey") %>% 
-  as.matrix() %>% 
-  t()
-matrix_results[is.na(matrix_results)] <- 0
-
-
-pheatmap(matrix_results,
-         color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
-         breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
-         show_rownames = TRUE,
-         show_colnames = TRUE,
-         #cluster_rows = TRUE,
-         #cluster_cols = TRUE,
-         #legend = TRUE,
-         main = "Metazooplankton - Phytoplankon lagged interactions"
-)
+pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
 ```
 
-
-
-
-
-
-
-
-
-
-
-ZP - PZP
+### ZP - PP
 ```{r}
 Prey <- taxatab_18S %>%
   filter(Class %in% phototrophic_plankton) %>% 
   pull(Taxa) %>% unique()
 
-output_cff <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey)
-output_cff
-
-
-output_cff
+pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
 ```
+
+### PZP - PP
+```{r}
+Predator <- taxatab_18S %>%
+  filter(Class %in% carnivorous_zooplankton) %>% 
+  pull(Taxa) %>% unique()
+
+Prey <- taxatab_18S %>%
+  filter(Class %in% non) %>% 
+  pull(Taxa) %>% unique()
+
+pw_ccf_plot(species_matrix, Predator, Prey, min_corr = 0.1)
+```
+
+### ZP ZP
+```{r}
+pw_ccf_plot(species_matrix, carnivorous_zooplankton, omnivorous_filter_feeding_zooplankton, min_corr = 0.1)
+```
+### ZP Fish
+```{r}
+pw_ccf_plot(species_matrix, pelagic_fish, unique(Dataset_COI$Taxa), min_corr = 0.1)
+```
+
+
+
+
 
 
 # 4. Define vectors for filtering
