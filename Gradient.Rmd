@@ -4,31 +4,165 @@ output: html_notebook
 ---
 
 ```{r}
+
+get_taxa <- function(data, Taxa, IQR_cutoff = 0.01) {
+  
+  filt_dat <- data %>%
+  filter(!str_ends({{Taxa}}, "@")) %>%
+  filter(!str_ends({{Taxa}}, "X")) %>% 
+  filter(Line_out_depth %in% c(0, 5, 30, 100)) %>%
+  filter(Abundance > 0) %>%
+  index_RA(Library_ID, {{Taxa}}, Abundance)
+
+
+p <- filt_dat %>%
+  group_by({{Taxa}}) %>%
+  mutate(IQR = IQR(RA_Index)) %>%
+  filter(IQR(RA_Index) > IQR_cutoff) %>% # Calculate IQR for each species
+  ungroup() %>%
+  mutate(Tax_1 = fct_reorder({{Taxa}}, IQR, .desc = TRUE)) %>%  # Reorder by IQR
+  ggplot(aes(Tax_1, RA_Index)) +
+  geom_boxplot() +
+  labs(x = as_name(ensym(Taxa)), y = "eDNA-index") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+
+print(p)
+
+abundant_taxa <- filt_dat %>%
+  group_by({{Taxa}}) %>%
+  filter(IQR(RA_Index) > IQR_cutoff) %>% # Adjust 0.5 to your desired IQR threshold
+  pull({{Taxa}}) %>% unique()
+
+return(abundant_taxa)
+  
+}
+
+taxa_tmp <- All_COI_data %>% 
+  filter(Project_name == "Gradient") %>%
+  get_taxa(Taxa = Species, IQR_cutoff = 0.01)
+
+
+
 Gradient_COI <- All_COI_data %>% 
   filter(Project_name == "Gradient") %>%
+  filter(Kingdom == "Animalia") %>%
+  filter(Species %in% taxa_tmp) %>% 
+  filter(!str_ends(Family, "@")) %>% 
   index_RA(Library_ID, Species, Abundance, Sample_date, Site_ID, Line_out_depth)
 
-Gradient_COI %>% 
-  pull(Site_ID) %>% unique()
-
+saveRDS(Gradient_COI, "Data_output/Nearshore_gradient_COI.rds")
+Gradient_COI <- readRDS("Data_output/Nearshore_gradient_COI.rds")
 
 
 Gradient_COI %>% 
   #group_by(Library_ID, Sample_date, Site_ID, Line_out_depth) %>% 
   #summarise() %>% 
   ggplot() +
-  geom_raster(aes(Site_ID, -as.numeric(Line_out_depth),
-                 fill = RA_Index)) +
+  geom_jitter(aes(Site_ID, -as.numeric(Line_out_depth),
+                 color = RA_Index,
+                 shape = factor(Sample_date)),
+              size = 2) +
   facet_wrap("Species") +
-  scale_fill_gradient2(high = '#4daf4a',
+  scale_color_gradient2(high = '#4daf4a',
                        low = "white") +
-  theme_minimal_vgrid(font_size = 8) +
+  theme_minimal_vgrid(font_size = 6) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         strip.text = element_text(face = "italic"),
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
 
-
+ggsave("Figure_output/Nearshore_gradient.pdf", width = 10, height = 7)
 
 ```
 
+```{r}
+Gradient_COI %>% 
+  group_by(Species) %>% 
+  summar
+
+
+Gradient_COI
+```
+
+```{r}
+mat <- Gradient_COI %>% 
+  select(Species, Library_ID, RA) %>% 
+  pivot_wider(names_from = Species, values_from = RA) %>% 
+  column_to_rownames("Library_ID") %>% 
+  as.matrix()
+
+correlation_matrix <- cor(mat)
+heatmap(correlation_matrix)
+
+
+
+# Sample code to perform K-means clustering on a correlation matrix
+
+# Assuming `correlation_matrix` is your correlation matrix:
+# Step 1: Convert the correlation matrix to a dissimilarity matrix
+# Using 1 - correlation to represent distance
+dissimilarity_matrix <- 1 - correlation_matrix
+
+# Step 2: Choose the number of clusters (k)
+# Let's assume you want 3 clusters (you can experiment with other values of k)
+k <- 4
+
+# Step 3: Perform K-means clustering
+# Run K-means on the transformed dissimilarity matrix
+# Use the `as.dist` function to treat it as a distance matrix
+kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
+
+# Step 4: Check the results
+# Cluster assignment for each variable
+cluster_df <- tibble(
+  Taxa = names(kmeans_result$cluster),
+  Cluster = as.factor(kmeans_result$cluster)
+)
+
+# Compute silhouette values for different k
+silhouette_scores <- vector("numeric", length = 10)
+for (i in 2:10) {  # k = 1 is not meaningful for silhouette analysis
+  kmeans_result <- kmeans(correlation_matrix, centers = i)
+  silhouette_scores[i] <- mean(silhouette(kmeans_result$cluster, dist(correlation_matrix))[, 3])
+}
+
+# Plot silhouette scores
+plot(2:10, silhouette_scores[2:10], type = "b", main = "Silhouette Method",
+     xlab = "Number of clusters", ylab = "Average Silhouette Score")
+
+cluster_df
+
+
+
+```
+```{r}
+
+plot_cluster_grad <- function(cluster) {
+  
+tax <- filter(cluster_df, Cluster %in% cluster)$Taxa
+
+Gradient_COI %>%
+  filter(Species %in% tax) %>% 
+  ggplot() +
+  geom_jitter(aes(Site_ID, -as.numeric(Line_out_depth),
+                 color = RA_Index,
+                 shape = factor(Sample_date)),
+              size = 2) +
+  facet_wrap("Species") +
+  scale_color_gradient2(high = '#4daf4a',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
+  
+  
+}
+
+plot_cluster_grad(1)
+plot_cluster_grad(2)
+plot_cluster_grad(3)
+plot_cluster_grad(4)
+
+
+```
 

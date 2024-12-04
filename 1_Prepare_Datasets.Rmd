@@ -323,7 +323,13 @@ All_COI_data <- bind_rows(
   merge_COI("COI_QU39-2019"),
   merge_COI("COI_Zoopsprint2022"))
 
-All_COI_data
+All_COI_data %>% 
+  filter(Genus == "Saxidomus") %>% 
+  pull(Species) %>%  unique()
+
+
+
+
 ```
 
 

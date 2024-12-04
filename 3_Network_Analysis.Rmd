@@ -37,6 +37,9 @@ depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
                   "5" = "#87ceeb",    # Sky blue for 5 m
                   "30" = "#4682b4",   # Steel blue for 30 m
                   "100" = "#00008b")  # Dark blue for 100 m
+
+
+
 ```
 
 
@@ -51,7 +54,15 @@ taxatab_18S <- Dataset_18S %>%
   group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
   summarise()
 
-Dataset_18S
+taxatab_COI <- Dataset_COI %>%
+  group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
+  summarise()
+
+taxtab_12S <- Dataset_12S %>% 
+  group_by(Class, Taxa) %>% 
+  summarise() %>% 
+  mutate(Phylum = "Chordata")
+
 
 Taxtab_X <- taxatab_18S %>% 
   group_by(PhylumX = Phylum, ClassX = Class, OrderX = Order,
@@ -171,7 +182,7 @@ Interpolated_12S_Data <- smoothed_data %>%
 
 
 # Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
-complete_data <- Dataset_18S_glom %>%
+complete_data <- Dataset_18S %>%
   filter(Line_out_depth %in% c(0,5,30,100)) %>%
   mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>%
   #filter(Phylum != "Metazoa") %>%
@@ -283,209 +294,24 @@ end_date <- as.Date("2019-01-13")
 seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date") %>%
   left_join(seasonal_data_12S, by = "Sample_date") %>% 
   filter(Sample_date >= start_date & Sample_date <= end_date)
-seasonal_data_all %>% 
-  colnames()
-  
+seasonal_data_all
 
 ```
 
-# 3. Construct correlation matrixes:
-
-### a. Without lags
-```{r}
-
-correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
-
-
-```
-
-Correlation without lag
+## Test matrix of just TS data
 
 ```{r}
-correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
-correlation_matrix_all %>% colnames()
+weekly_data_all <- pivot_wider(Interpolated_12S_Data, names_from = Taxa, values_from = Abundance) %>% 
+  left_join(pivot_wider(Interpolated_18S_Data, names_from = Taxa, values_from = Abundance)) %>% 
+  left_join(pivot_wider(Interpolated_COI_Data, names_from = Taxa, values_from = Abundance)) %>% 
+  filter(Sample_date != "2017-01-08", 
+         Sample_date != "2019-01-20",
+         Sample_date != "2019-01-27",
+         Sample_date != "2019-02-03")
 ```
 
 
-### b. With Lags
-
-
-```{r}
-species_matrix <- as.matrix(seasonal_data_all %>% select(-Sample_date))
-
-
-
-# Initialize results data frame
-results <- data.frame(Species1 = character(), Species2 = character(),
-                      Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
-
-max_lag <- 3
-
-for (i in 1:(ncol(species_matrix))) {
-  for (j in 1:ncol(species_matrix)) {
-    ts1 <- species_matrix[, i]
-    ts2 <- species_matrix[, j]
-    
-    # Compute cross-correlation without plotting
-    ccf_result <- ccf(ts1, ts2, lag.max = max_lag, plot = FALSE)
-    
-    # Check for valid cross-correlation values
-    if (!is.null(ccf_result$acf) && length(ccf_result$acf) > 0 && !all(is.na(ccf_result$acf))) {
-      max_corr_idx <- which.max(abs(ccf_result$acf))
-      max_corr <- ccf_result$acf[max_corr_idx]
-      lag_at_max_corr <- ccf_result$lag[max_corr_idx]
-      
-      # Store only significant correlations if they meet the threshold
-      if (!is.na(max_corr) && abs(max_corr) > 0.5) {
-        results <- rbind(results, data.frame(Species1 = colnames(species_matrix)[i],
-                                             Species2 = colnames(species_matrix)[j],
-                                             Max_Correlation = max_corr,
-                                             Lag = lag_at_max_corr))
-      }
-    }
-  }
-}
-
-results %>% 
-  pull(Species1) %>%  unique()
-
-# Create an adjacency matrix based on significant correlations
-adj_matrix <- with(results, {
-  mat <- matrix(0, ncol = length(colnames(species_matrix)), nrow = length(colnames(species_matrix)),
-                dimnames = list(colnames(species_matrix), colnames(species_matrix)))
-  for (k in 1:nrow(results)) {
-    mat[results$Species1[k], results$Species2[k]] <- results$Max_Correlation[k]
-  }
-  return(mat)
-})
-
-lag_matrix <- with(results, {
-  mat <- matrix(0, ncol = length(colnames(species_matrix)), nrow = length(colnames(species_matrix)),
-                dimnames = list(colnames(species_matrix), colnames(species_matrix)))
-  for (k in 1:nrow(results)) {
-    mat[results$Species1[k], results$Species2[k]] <- results$Lag[k]
-  }
-  return(mat)
-})
-lag_matrix
-```
-
-
-
-
-## function for testing specific lags
-
-
-```{r}
-pw_ccf <- function(mat, predator, prey, max_lag = 3, min_corr = -1) {
-  # Initialize results data frame
-  results <- data.frame(Predator = character(), Prey = character(),
-                        Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
-  
-  # Loop through each predator-prey pair
-  for (pred in predator) {
-    for (prey_taxa in prey) {
-      ts_pred <- mat[, pred]
-      ts_prey <- mat[, prey_taxa]
-      
-      # Compute cross-correlation without plotting
-      ccf_result <- ccf(ts_prey, ts_pred, lag.max = max_lag, plot = FALSE)
-      
-      # Check for valid cross-correlation values
-      if (!is.null(ccf_result$acf) && length(ccf_result$acf) > 0 && !all(is.na(ccf_result$acf))) {
-        max_corr_idx <- which.max(abs(ccf_result$acf))
-        max_corr <- ccf_result$acf[max_corr_idx]
-        lag_at_max_corr <- ccf_result$lag[max_corr_idx]
-        
-        # Filter for significant correlations and relevant lags
-        if (!is.na(max_corr) && lag_at_max_corr <= 0) {
-          results <- rbind(results, data.frame(Predator = pred, Prey = prey_taxa,
-                                               Max_Correlation = max_corr, Lag = lag_at_max_corr))
-        }
-      }
-    }
-  }
-  
-  return(results)
-}
-
-
-
-pw_ccf_plot <- function(...) {
-
-  output_cff <- pw_ccf(...)
-  
-  matrix_results <- output_cff %>%
-    select(Predator, Prey, Max_Correlation) %>%
-    pivot_wider(names_from = Predator, values_from = Max_Correlation) %>%
-    column_to_rownames(var = "Prey") %>% 
-    as.matrix() %>% 
-    t()
-  matrix_results[is.na(matrix_results)] <- 0
-  
-  
-  pheatmap(matrix_results,
-           color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
-           breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
-           show_rownames = TRUE,
-           show_colnames = TRUE,
-           cluster_rows = TRUE,
-           cluster_cols = TRUE,
-           legend = TRUE
-  )
-}
-
-
-
-
-```
-
-### ZP - PZP
-```{r}
-Prey <- taxatab_18S %>%
-  filter(Class %in% heterotrophic_protists) %>% 
-  pull(Taxa) %>% unique()
-
-pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
-```
-
-### ZP - PP
-```{r}
-Prey <- taxatab_18S %>%
-  filter(Class %in% phototrophic_plankton) %>% 
-  pull(Taxa) %>% unique()
-
-pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
-```
-
-### PZP - PP
-```{r}
-Predator <- taxatab_18S %>%
-  filter(Class %in% carnivorous_zooplankton) %>% 
-  pull(Taxa) %>% unique()
-
-Prey <- taxatab_18S %>%
-  filter(Class %in% non) %>% 
-  pull(Taxa) %>% unique()
-
-pw_ccf_plot(species_matrix, Predator, Prey, min_corr = 0.1)
-```
-
-### ZP ZP
-```{r}
-pw_ccf_plot(species_matrix, carnivorous_zooplankton, omnivorous_filter_feeding_zooplankton, min_corr = 0.1)
-```
-### ZP Fish
-```{r}
-pw_ccf_plot(species_matrix, pelagic_fish, unique(Dataset_COI$Taxa), min_corr = 0.1)
-```
-
-
-
-
-
-
-# 4. Define vectors for filtering
+# 3. Define vectors for filtering
 
 ```{r}
 # Define vectors for filtering
@@ -561,7 +387,623 @@ pelagic_fish <- c(
 ```
 
 
-# 5. PLot Heatmaps
+Dataframe for taxa based on above
+
+```{r}
+PZP <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>%
+  ungroup() %>% 
+  select(Taxa, Class, Phylum) %>% 
+  mutate(FG = "Protozooplankton")
+
+PP <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>%
+  ungroup() %>% 
+  select(Taxa, Class, Phylum) %>% 
+  mutate(FG = "Phytoplankton")
+
+CZP <- taxatab_COI %>% 
+  filter(Taxa %in% carnivorous_zooplankton) %>% 
+  ungroup() %>% 
+  select(Taxa, Class, Phylum) %>% 
+  mutate(FG = "Carnivorous_Zooplankton")
+
+OZP <- taxatab_COI %>% 
+  filter(Taxa %in% omnivorous_filter_feeding_zooplankton) %>% 
+  ungroup() %>% 
+  select(Taxa, Class, Phylum) %>% 
+  mutate(FG = "Omnivorous_Zooplankton")
+
+
+PF <- taxtab_12S %>% 
+  ungroup() %>% 
+  filter(Taxa %in% pelagic_fish) %>%
+  mutate(FG = "Nekton")
+  
+Functional_groups <- bind_rows(PZP, PP, CZP, OZP, PF) %>% 
+  select(FG, Phylum, Class, Taxa)
+
+Functional_groups
+
+```
+
+
+
+
+# 4. Construct correlation matrixes:
+
+## a. Without lags
+```{r}
+
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+
+```
+
+Correlation without lag
+
+```{r}
+correlation_matrix_all <- cor(seasonal_data_all %>% select(-Sample_date), use = "pairwise.complete.obs")
+correlation_matrix_all %>% colnames()
+```
+
+
+## b. With Lags
+
+Define function for cff of specific predator and prey
+```{r}
+pw_ccf <- function(mat, predator, prey, max_lag = 3, min_corr = -1) {
+  # Initialize results data frame
+  results <- data.frame(Predator = character(), Prey = character(),
+                        Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
+  
+  # Loop through each predator-prey pair
+  for (pred in predator) {
+    for (prey_taxa in prey) {
+      ts_pred <- mat[, pred]
+      ts_prey <- mat[, prey_taxa]
+      
+      # Compute cross-correlation without plotting
+      ccf_result <- ccf(ts_prey, ts_pred, lag.max = max_lag, plot = FALSE)
+      
+      # Check for valid cross-correlation values
+      if (!is.null(ccf_result$acf) && length(ccf_result$acf) > 0 && !all(is.na(ccf_result$acf))) {
+        max_corr_idx <- which.max(ccf_result$acf)
+        max_corr <- ccf_result$acf[max_corr_idx]
+        lag_at_max_corr <- ccf_result$lag[max_corr_idx]
+        
+        # Filter for significant correlations and relevant lags
+        if (!is.na(max_corr) && lag_at_max_corr <= 0) {
+          results <- rbind(results, data.frame(Predator = pred, Prey = prey_taxa,
+                                               Max_Correlation = max_corr, Lag = lag_at_max_corr))
+        }
+      }
+    }
+  }
+  
+  return(results)
+}
+
+
+# Plotting output function
+
+
+pw_ccf_plot <- function(...) {
+
+  output_cff <- pw_ccf(...)
+  
+  matrix_results <- output_cff %>%
+    select(Predator, Prey, Max_Correlation) %>%
+    pivot_wider(names_from = Predator, values_from = Max_Correlation) %>%
+    column_to_rownames(var = "Prey") %>% 
+    as.matrix() %>% 
+    t()
+  matrix_results[is.na(matrix_results)] <- 0
+  
+  
+  heatmap(matrix_results,
+           color = colorRampPalette(c("white", "pink"))(50),  # Custom color scale from white to blue
+           #breaks = c(0, 0.5, seq(0.5001, 1, length.out = 49)),  # Ensure breaks are unique by starting slightly above 0.5
+           show_rownames = TRUE,
+           show_colnames = TRUE,
+           cluster_rows = TRUE,
+           cluster_cols = TRUE,
+           legend = TRUE
+  )
+}
+
+
+
+
+```
+
+
+```{r}
+species_matrix <- as.matrix(seasonal_data_all %>% select(-Sample_date))
+species_matrix_week <- as.matrix(weekly_data_all %>% select(-Sample_date))
+```
+
+
+### ZP - PZP
+```{r}
+Prey <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+pdf(file = "Figure_output/Corr_Plots_CFF/ZP - PZP.pdf", width = 20, height = 20)
+pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.5)
+
+
+zp_pzp <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
+
+```
+
+### ZP - PP
+```{r}
+Prey <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+pw_ccf_plot(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
+
+zp_pp <- pw_ccf(species_matrix, unique(Dataset_COI$Taxa), Prey, min_corr = 0.1)
+
+zp_pp
+```
+
+### PZP - PP
+```{r}
+Predator <- taxatab_18S %>%
+  filter(Class %in% heterotrophic_protists) %>% 
+  pull(Taxa) %>% unique()
+
+Prey <- taxatab_18S %>%
+  filter(Class %in% phototrophic_plankton) %>% 
+  pull(Taxa) %>% unique()
+
+
+pw_ccf_plot(species_matrix, Predator, Prey, min_corr = 0.1)
+
+pzp_pp <- pw_ccf(species_matrix, Predator, Prey, min_corr = 0.1)
+
+```
+
+### ZP - ZP
+```{r}
+pw_ccf_plot(species_matrix, carnivorous_zooplankton, omnivorous_filter_feeding_zooplankton, min_corr = 0.1)
+
+zp_zp <- pw_ccf(species_matrix, carnivorous_zooplankton, omnivorous_filter_feeding_zooplankton, min_corr = 0.1)
+```
+### Fish - ZP
+```{r}
+pw_ccf_plot(species_matrix, pelagic_fish, unique(Dataset_COI$Taxa), min_corr = 0.1)
+
+fish_zp <- pw_ccf(species_matrix, pelagic_fish, unique(Dataset_COI$Taxa), min_corr = 0.1)
+```
+
+### Merge CCF to adj.mat
+
+```{r}
+
+df <- bind_rows(fish_zp, zp_zp, zp_pzp, zp_pp, pzp_pp) %>% 
+  filter(Max_Correlation > 0.45) %>% 
+  select(Predator, Prey)
+
+# Get all unique taxa
+all_taxa <- unique(c(df$Predator, df$Prey))
+
+# Initialize square adjacency matrix
+adj_matrix <- matrix(0, nrow = length(all_taxa), ncol = length(all_taxa),
+                     dimnames = list(all_taxa, all_taxa))
+
+# Populate matrix with interactions
+for (i in seq_len(nrow(df))) {
+  adj_matrix[df$Predator[i], df$Prey[i]] <- 1
+}
+
+
+adj_matrix
+
+
+taxatab_18S %>% 
+  write_csv("Data_output/taxtab_18S.csv")
+
+```
+
+
+# 5. Network analysis
+
+```{r}
+library(igraph)
+```
+
+
+## a. Global Seasonal Network Metrics
+
+
+```{r}
+# Function for constructing igraph based on date
+
+date_graph <- function(Date) {
+  
+  a <- week(date(Date))
+  b <- a-1
+  c <- a+1
+  weeks <- c(a,b,c)
+  
+  day_taxa <- seasonal_data_all %>%
+    pivot_longer(!1, names_to = "Taxa", values_to = "Relative") %>%
+    filter(Relative > 0) %>%
+    mutate(Week = week(Sample_date)) %>% 
+    filter(Week %in% weeks) %>%
+    filter(Taxa %in% colnames(adj_matrix)) %>% 
+    pull(Taxa) %>% 
+    unique()
+
+
+filtered_matrix <- adj_matrix[day_taxa, day_taxa, drop = FALSE] %>% 
+  t()
+
+graph <- graph_from_adjacency_matrix(t(filtered_matrix), mode = "directed", weighted = NULL)
+}
+
+```
+
+	Global Metrics
+
+	•	Density: Proportion of possible edges that are realized.
+	•	Diameter: Longest shortest path in the network.
+	•	Average Path Length: Average shortest path length between all node pairs.
+	
+	Other Metrics
+
+	•	Modularity: Strength of division into clusters.
+	•	Clustering Coefficient: Tendency of nodes to form triangles.
+
+As loop:
+```{r}
+All_dates <- seasonal_data_all %>%
+  filter(year(Sample_date) == 2017) %>% 
+  pull(Sample_date) %>% unique() %>% 
+  as.Date()
+
+# Initialize an empty dataframe to store results
+results_df <- data.frame(
+  Date = Date(),
+  Density = numeric(),
+  Diameter = numeric(),
+  Average_Path_Length = numeric(),
+  Modularity = numeric(),
+  Clustering_Coefficient = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Loop through all dates
+for (current_date in All_dates) {
+  # Generate the graph for the current date
+  graph <- date_graph(as.Date(current_date))
+  
+  # Calculate global metrics
+  density <- edge_density(graph)
+  diameter <- diameter(graph)
+  avg_path_length <- mean_distance(graph)
+  
+  # Modularity
+  clusters <- cluster_edge_betweenness(graph)
+  modularity_score <- modularity(clusters)
+  
+  # Clustering coefficient
+  clustering_coeff <- transitivity(graph, type = "average")
+  
+  # Number of nodes
+  num_nodes <- vcount(graph)
+
+  # Number of links (edges)
+  num_links <- ecount(graph)
+  
+  # Append the results to the dataframe
+  results_df <- rbind(results_df, data.frame(
+    Date = current_date,
+    Density = density,
+    #Diameter = diameter,
+    Average_Path_Length = avg_path_length,
+    Modularity = modularity_score,
+    Clustering_Coefficient = clustering_coeff,
+    Number_nodes = num_nodes,
+    Number_links = num_links
+  ))
+}
+
+results_df %>% 
+  mutate(Date = as.Date(Date)) %>%
+  pivot_longer(!1, names_to = "Metrics", values_to = "Value") %>% 
+  ggplot() +
+  geom_line(aes(Date, Value)) +
+  #geom_smooth(aes(Date, Value)) +
+  facet_wrap("Metrics", scales = "free", ncol = 3) +
+  theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/2)
+
+ggsave("Figure_output/Global_Metrics.pdf")
+
+```
+
+
+
+## b. Node-Level Metrics
+
+	•	Degree Centrality: Number of connections (incoming or outgoing) for each node.
+	•	Betweenness Centrality: How often a node lies on the shortest path between other nodes.
+	•	Closeness Centrality: How close a node is to all other nodes.
+	•	Eigenvector Centrality: Influence of a node in the network.
+	
+	
+When is the peak of each node?
+```{r}
+Node_Data <- seasonal_data_all %>%
+  filter(year(Sample_date) == 2017) %>% 
+  pivot_longer(!1, names_to = "Taxa", values_to = "signal") %>% 
+  group_by(Taxa) %>%
+  slice_max(signal, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  arrange(Sample_date) %>% 
+  filter(Taxa %in% colnames(adj_matrix)) %>%
+  select(Taxa, Date_max = Sample_date) %>% 
+  right_join(Functional_groups, by = "Taxa")
+
+
+
+```
+	
+
+### Simple Node Level Metrics
+
+```{r}
+graph <- graph_from_adjacency_matrix(t(adj_matrix), mode = "directed", weighted = NULL)
+graph
+# Node-Level metrics
+
+degree <- degree(graph, mode = "all")          # Total degree (in + out)
+in_degree <- degree(graph, mode = "in")        # Incoming connections
+out_degree <- degree(graph, mode = "out")      # Outgoing connections
+betweenness <- betweenness(graph)
+closeness <- closeness(graph)
+eigenvector <- eigen_centrality(graph)$vector
+
+# Combine metrics into a data frame
+node_metrics <- data.frame(
+  #Taxa = V(graph)$name,
+  Degree_Centrality = degree,
+  In_Degree = in_degree,
+  Out_Degree = out_degree,
+  Betweenness_Centrality = betweenness,
+  Closeness_Centrality = closeness,
+  Eigenvector = eigenvector
+) %>% 
+  rownames_to_column("Taxa") %>% 
+  left_join(Node_Data)
+
+vcount(graph)
+```
+
+
+
+
+### Weighted Trophic Level
+```{r}
+# Calculate trophic levels iteratively
+trophic_levels <- rep(NA, vcount(graph))
+names(trophic_levels) <- V(graph)$name
+
+# Assign initial trophic levels to basal nodes
+trophic_levels[basal_nodes$name] <- 1
+
+# Iteratively calculate for other nodes
+for (i in 1:vcount(graph)) {
+  for (node in V(graph)) {
+    # Use the vertex index instead of the object directly
+    prey <- neighbors(graph, node, mode = "in") # Prey are incoming neighbors
+    if (length(prey) > 0) {
+      trophic_levels[node] <- 1 + mean(trophic_levels[prey], na.rm = TRUE)
+    }
+  }
+}
+
+# Add as vertex attribute
+V(graph)$trophic_level <- trophic_levels
+TL <- data.frame(Trophic_level = trophic_levels) %>% 
+  rownames_to_column("Taxa")
+TL
+
+node_metrics <- TL %>% 
+  left_join(node_metrics, by = "Taxa")
+node_metrics
+```
+
+## Paths per top predator
+
+```{r}
+# Initialize a data frame to store results
+path_counts <- data.frame(
+  Taxa = character(),
+  Num_Paths = integer(),
+  stringsAsFactors = FALSE
+)
+
+# Loop over each target node in the graph
+for (target_node in V(graph)$name) {
+  # Initialize an empty list for paths to this target node
+  all_paths <- list()
+  
+  # Loop over each basal node and compute paths
+  for (node in basal_nodes) {
+    paths_from_node <- all_simple_paths(graph, from = node, to = V(graph)[name == target_node])
+    all_paths <- c(all_paths, paths_from_node) # Append paths to the list
+  }
+  
+  # Add the results for this target node to the data frame
+  path_counts <- rbind(
+    path_counts,
+    data.frame(Taxa = target_node, Num_Paths = length(all_paths), stringsAsFactors = FALSE)
+  )
+}
+node_metrics <- path_counts %>% 
+  left_join(node_metrics, by = "Taxa")
+
+node_metrics
+```
+
+
+
+### Plot
+
+```{r}
+# Functional groups
+functional_groups <- c(
+  "Phytoplankton",
+  "Protozooplankton",
+  "Omnivorous_Zooplankton",
+  "Carnivorous_Zooplankton",
+  "Nekton"
+)
+
+Metrics_levels <- c(
+  "In_Degree",
+  "Out_Degree",
+  "Degree_Centrality",
+  "Closeness_Centrality",
+  "Betweenness_Centrality",
+  "Eigenvector",
+  "Trophic_level",
+  "Num_Paths"
+)
+
+# Corresponding colors
+colors <- c(
+  "Phytoplankton" = "#66C2A5",
+  "Protozooplankton" = "#FFD92F",
+  "Omnivorous_Zooplankton" = "#8DA0CB",
+  "Carnivorous_Zooplankton" = "#3288BD",
+  "Nekton" = "#FC8D62"
+)
+
+
+node_metrics %>%
+  pivot_longer(4:9, names_to = "Metrics", values_to = "Value") %>%
+  mutate(Functional_Group = factor(FG, levels = functional_groups)) %>%
+  mutate(Metrics = factor(Metrics, levels = Metrics_levels)) %>% 
+  filter(is.na(FG) == FALSE) %>% 
+  ggplot() +
+  geom_point(aes(Date_max, Value, colour = Functional_Group), size = 0.5) +
+  geom_smooth(aes(Date_max, Value, colour = Functional_Group), se = FALSE, size = 0.8 ) +
+  facet_wrap("Metrics", scales = "free") +
+  scale_color_manual(values = colors) +
+      theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/1.5)
+
+ggsave("Figure_output/Node_Metrics.pdf")
+```
+
+Standardized metrics:
+```{r}
+node_metrics %>% 
+  pivot_longer(2:3, names_to = "Metrics", values_to = "Value") %>%
+  mutate(Functional_Group = factor(FG, levels = functional_groups)) %>%
+  mutate(Metrics = factor(Metrics, levels = Metrics_levels)) %>% 
+  filter(is.na(FG) == FALSE) %>% 
+  group_by(Functional_Group, Metrics) %>% 
+  mutate(Value = Value/mean(Value)) %>% 
+  ggplot() +
+  geom_point(aes(Date_max, Value, colour = Functional_Group), size = 0.5) +
+  geom_smooth(aes(Date_max, Value, colour = Functional_Group), se = FALSE, size = 0.8 ) +
+  facet_wrap("Metrics", scales = "free") +
+  scale_color_manual(values = colors) +
+      theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/1.5)
+
+ggsave("Figure_output/Trophic_Levels.pdf")
+```
+
+
+```{r}
+node_metrics
+
+node_metrics %>%
+  filter(is.na(FG) == FALSE) %>% 
+  #filter(FG %!in% c("Phytoplankton", "Protozooplankton")) %>% 
+  mutate(Functional_Group = factor(FG, levels = functional_groups)) %>%
+  group_by(Functional_Group) %>% 
+  mutate(Num_Paths = Num_Paths/mean(Num_Paths)) %>% 
+  ggplot() +
+  geom_point(aes(Date_max, Num_Paths, colour = Functional_Group)) +
+  geom_smooth(aes(Date_max, Num_Paths, colour = Functional_Group), se = FALSE, size = 0.8) +
+  scale_color_manual(values = colors) +
+      theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/1.5)
+
+ggsave("Figure_output/Taxa_Richness.pdf")
+```
+### Taxa richness
+```{r}
+Node_Data %>%
+  mutate(Month_max = month(Date_max, abbr = FALSE )) %>% 
+  group_by(FG, Month_max) %>% 
+  summarise(n = n()) %>%
+  ungroup() %>% 
+  group_by(FG) %>% 
+  mutate(n = n/max(n)) %>% 
+  mutate(Functional_Group = factor(FG, levels = functional_groups)) %>% 
+  ggplot() +
+  geom_point(aes(month(Month_max), n, colour = Functional_Group)) +
+  geom_smooth(aes(month(Month_max), n, colour = Functional_Group), se = FALSE) +
+    scale_color_manual(values = colors) +
+      theme_minimal_vgrid(font_size = 10) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        #strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/1.5)
+
+ggsave("Figure_output/Taxa_Richness.pdf")
+```
+
+```{r}
+node_metrics %>% 
+  arrange(-Eigenvector) %>% 
+  filter(FG == "Protozooplankton")
+```
+# test plot protozoans
+
+```{r}
+seasonal_data_all %>% 
+  select(Sample_date, Chromidina) %>%  plot
+
+seasonal_data_all
+```
+
+
+
+# ___ OLD CODE ___
+
+
+
+
+# 6. PLot Heatmaps
 
 ```{r}
 results %>% 

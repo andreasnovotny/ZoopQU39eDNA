@@ -36,7 +36,8 @@ library(tidyverse)
 depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
                   "5" = "#87ceeb",    # Sky blue for 5 m
                   "30" = "#4682b4",   # Steel blue for 30 m
-                  "100" = "#00008b")  # Dark blue for 100 m
+                  "100" = "#00008b",
+                  "260" = "black")  # Dark blue for 100 m
 ```
 
 
@@ -44,8 +45,32 @@ depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
 Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
 #Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
+```
 
-  
+
+```{r}
+Dataset_Bottle %>% 
+  filter(year(date) == 2017) %>% 
+  #filter(line_out_depth == 5) %>%
+  select(date, line_out_depth, `chla_Bulk GF/F`, no2_no3_um,
+         Temperature, Salinity) %>%
+  pivot_longer(!1:2) %>%
+  mutate(name = factor(name, levels = c(
+    "Temperature", "Salinity", "chla_Bulk GF/F", "no2_no3_um"
+  ))) %>% 
+  filter(is.na(value) == FALSE) %>%
+  mutate(line_out_depth = factor(line_out_depth)) %>% 
+  ggplot() +
+  geom_line(aes(date, value, color = line_out_depth)) +
+  facet_wrap("name", scales = "free", ncol = 2) +
+  scale_color_manual(values = depth_colors) +
+  theme_minimal(10) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/Bottle_Data_4.pdf")
+
 ```
 
 
@@ -264,6 +289,8 @@ trait_dataset %>%
 species_mat <- comm %>% 
   as.matrix() %>% 
   t()
+
+
 
 ```
 

@@ -1,0 +1,57 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+
+trait_dataset$scientificName %>%
+  sort()
+
+trait_dataset %>% 
+  filter(traitName %in% c("dielVerticalMigration",
+                          "verticalDistribution")) %>% 
+  filter(scientificName == "Euphausia pacifica")
+
+
+
+
+species <- c(
+  "Acartia longiremis", "Aetideus divergens", "Calanus pacificus", "Calliopius pacificus", 
+  "Centropages abdominalis", "Clione limacina", "Clytia gregaria", "Corycaeus anglicus", 
+  "Cyphocaris challengeri", "Discoconchoecia elegans", "Eucalanus bungii", "Euphausia pacifica", 
+  "Eutonina indicans", "Metridia pacifica", "Microcalanus pygmaeus", "Mitrocoma cellularia", 
+  "Muggiaea atlantica", "Munida quadrispina", "Nanomia bijuga", "Neocalanus plumchrus", 
+  "Oithona atlantica", "Paracalanus parvus", "Paraeuchaeta elongata", "Pasiphaea pacifica", 
+  "Pseudocalanus mimus", "Pseudocalanus minutus", "Pseudocalanus newmani", "Scina borealis", 
+  "Thysanoessa longipes", "Triconia borealis"
+)
+
+
+trait_dataset %>%
+  filter(traitName %in% c("dielVerticalMigration",
+                          "verticalDistribution")) %>% 
+  filter(scientificName %in% species) %>% 
+  select(scientificName, traitName, traitValue, primaryReference, primaryReference, primaryReferenceDOI, secondaryReferenceDOI) %>%
+  write_csv("Data_output/Vertical_Distribution.csv")
+
+
+trait_dataset %>% 
+  filter(scientificName %in% "Beroe")
+
+DVM <- trait_dataset %>%
+  filter(traitName %in% c("dielVerticalMigration")) %>% 
+  filter(scientificName %in% species) %>% 
+  select(scientificName, DVM = traitValue, DVM_ref = primaryReference)
+
+Dist <- trait_dataset %>%
+  filter(traitName %in% c("verticalDistribution")) %>% 
+  filter(scientificName %in% species) %>% 
+  select(scientificName, Distributiion = traitValue, Distributiion_ref = primaryReference)
+
+full_join(DVM, Dist) %>% 
+  write_csv("Data_output/Vertical_Distribution.csv")
+
+```
+
+

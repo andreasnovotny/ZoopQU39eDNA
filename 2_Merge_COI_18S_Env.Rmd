@@ -194,6 +194,9 @@ COI_filtered_df <- Good_COI_data %>%
 ```
 
 
+
+
+
 # 3. Stapwise aggregation of low taxa
 ```{r}
 get_taxa <- function(data, Taxa, IQR_cutoff = 0.01) {
