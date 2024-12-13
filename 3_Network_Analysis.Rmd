@@ -39,6 +39,12 @@ depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
                   "100" = "#00008b")  # Dark blue for 100 m
 
 
+# Network analysis
+library(igraph)
+library(tidygraph)
+library(ggraph)
+
+
 
 ```
 
@@ -63,6 +69,9 @@ taxtab_12S <- Dataset_12S %>%
   summarise() %>% 
   mutate(Phylum = "Chordata")
 
+taxtab_12S %>% 
+  write_csv("Data_output/taxtab_12S.csv")
+
 
 Taxtab_X <- taxatab_18S %>% 
   group_by(PhylumX = Phylum, ClassX = Class, OrderX = Order,
@@ -72,6 +81,12 @@ Taxtab_Y <- taxatab_18S %>%
   group_by(PhylumY = Phylum, ClassY = Class, OrderY = Order,
            FamilyY = Family, GenusY = Genus, TaxaY = Taxa) %>% 
   summarise()
+
+
+taxatab_COI %>% 
+  write_csv("Data_output/taxtab_COI.csv")
+
+
 
 ```
 
@@ -296,6 +311,8 @@ seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample
   filter(Sample_date >= start_date & Sample_date <= end_date)
 seasonal_data_all
 
+## seasonal_data_all will be used for correlation analysis later.
+
 ```
 
 ## Test matrix of just TS data
@@ -308,7 +325,442 @@ weekly_data_all <- pivot_wider(Interpolated_12S_Data, names_from = Taxa, values_
          Sample_date != "2019-01-20",
          Sample_date != "2019-01-27",
          Sample_date != "2019-02-03")
+
+weekly_data_all
 ```
+
+# 3. Construct Metaweb
+
+Constructing a trait based metaweb using size and feeding assumptions:
+
+```{r}
+trait_18S <- read_excel("Data_import/protozoan_traits.xlsx")
+```
+
+Parasites and symbionts are excluded from the analysis, and so are fungi,
+and streptophytes (land plants).
+
+- Protozoan predators are non-metazoan eukaryotes with known heterotrophy.
+- They can also be mixotrophs, but not purely autotrophs.
+- They prey on any genus that atr in all size classes lower than themselves, either heterotrophic or phototrophic.
+
+```{r}
+# Protozoan Predators:
+ppredator <- trait_18S %>% 
+  filter(Genus != "NA",
+         is.na(Parasitism),
+         is.na(Symbiont),
+         Heterotrophy == 1,
+         Phylum %!in% c("Fungi"),
+         !is.na(Sizeclass)) %>% 
+  select(Predator = Taxa, Predator_size = Sizeclass)
+## Prey
+pprey <- trait_18S %>% 
+  filter(Genus != "NA",
+         is.na(Parasitism),
+         is.na(Symbiont),
+         Phylum %!in% c("Fungi"),
+         !is.na(Sizeclass)) %>% 
+  select(Prey = Taxa, Prey_size = Sizeclass)
+  
+PZP <- tidyr::crossing(ppredator, pprey) %>% 
+  filter(Predator_size > Prey_size)
+```
+
+- carnivorous zooplankton, are based on trait data
+- they prey on mesoplankton (or micro-meso protozoans),
+but only those 1.5 size classes below, (or smaller) than themselves.
+
+```{r}
+# Carnivorous zooplankton
+carnpred <- trait_18S %>% 
+  filter(TrophicState == "carnivore") %>% 
+  select(Predator = Taxa, Predator_size = Sizeclass)
+
+## Prey
+carnpreyd <- trait_18S %>% 
+  filter(Genus != "NA",
+         is.na(Parasitism),
+         is.na(Symbiont),
+         Phylum %!in% c("Fungi"),
+         !is.na(Sizeclass)) %>% 
+  filter(Sizeclass > 3) %>% 
+  select(Prey = Taxa, Prey_size = Sizeclass)
+
+CZP <- tidyr::crossing(carnpred, carnpreyd) %>% 
+  filter((Predator_size - Prey_size) > 1)
+
+CZP
+```
+- omnivorous zooplankton, are based on trait data
+- they prey on any plankton in the nano range and up, 
+but only those 1.5 size classes below, (or smaller) than themselves.
+```{r}
+# Omnivorous zooplankton
+omnpred <- trait_18S %>% 
+  filter(TrophicState == "omnivore") %>% 
+  select(Predator = Taxa, Predator_size = Sizeclass)
+omnpred
+
+## Prey
+omnprey <- trait_18S %>% 
+  filter(Genus != "NA",
+         is.na(Parasitism),
+         is.na(Symbiont),
+         Phylum %!in% c("Fungi"),
+         !is.na(Sizeclass)) %>% 
+  filter(Sizeclass > 1) %>% 
+  select(Prey = Taxa, Prey_size = Sizeclass)
+omnprey
+
+OZP <- tidyr::crossing(omnpred, omnprey) %>% 
+  filter((Predator_size - Prey_size) > 1)
+```
+- pelagic fish eat zooplankton...
+
+```{r}
+pelagic_fish <- c(
+  "Alosa sapidissima", "Ammodytes personatus", "Anoplopoma fimbria", 
+  "Boreogadus saida", "Clupea pallasii", "Diaphus theta", 
+  "Engraulis mordax", "Gasterosteus aculeatus", "Mallotus villosus", 
+  "Merluccius productus", "Oncorhynchus gorbuscha", "Oncorhynchus keta", 
+  "Oncorhynchus kisutch", "Oncorhynchus nerka", "Oncorhynchus tshawytscha", 
+  "Osmerus mordax", "Sardinops sagax", "Stenobrachius leucopsarus", 
+  "Stenobrachius nannochir", "Thaleichthys pacificus", "Zaprora silenus"
+)
+
+fishpred <- taxtab_12S %>% 
+  ungroup() %>%
+  filter(Taxa %in% pelagic_fish) %>% 
+  select(Predator = Taxa)
+
+fishprey <- trait_18S %>% 
+  filter(TrophicState %in% c("carnivore", "omnivore")) %>% 
+  select(Prey = Taxa)
+
+FISH <- tidyr::crossing(fishpred, fishprey)
+FISH 
+```
+
+```{r}
+METAWEB <- bind_rows(PZP, CZP, OZP, FISH) %>% 
+  select(Predator, Prey)
+
+METAWEB
+# Meta web is a adjacency dataframe that will be used later to guide correlation analysis.
+```
+
+# 4. Correlation matrixes:
+
+
+## a. Without lags
+Auto-correlations with no lags of all involved species.
+```{r}
+correlation_matrix_all <- cor(seasonal_data_all %>%
+                                select(-Sample_date), use = "pairwise.complete.obs")
+```
+
+## b. With lags
+Testing only METAWEB interactions:
+
+```{r}
+pw_ccf <- function(mat, adj.df, max_lag = 3, min_corr = -1) {
+  # Initialize results data frame
+  results <- data.frame(Predator = character(), Prey = character(),
+                        Max_Correlation = numeric(), Lag = integer(), stringsAsFactors = FALSE)
+  
+  # Loop through each predator-prey pair in adj.df
+  for (i in seq_len(nrow(adj.df))) {
+    pred <- adj.df$Predator[i]
+    prey_taxa <- adj.df$Prey[i]
+    
+    # Extract time series for predator and prey as numeric vectors
+    ts_pred <- mat[, pred]
+    ts_prey <- mat[, prey_taxa]
+    
+    # Check if both species exist in mat
+    if (!is.null(ts_pred) && !is.null(ts_prey)) {
+      # Compute cross-correlation without plotting
+      ccf_result <- ccf(ts_prey, ts_pred, lag.max = max_lag, plot = FALSE)
+      
+      # Check for valid cross-correlation values
+      if (!is.null(ccf_result$acf) && length(ccf_result$acf) > 0 && !all(is.na(ccf_result$acf))) {
+        max_corr_idx <- which.max(ccf_result$acf)
+        max_corr <- ccf_result$acf[max_corr_idx]
+        lag_at_max_corr <- ccf_result$lag[max_corr_idx]
+        
+        # Filter for significant correlations and relevant lags
+        if (!is.na(max_corr) && lag_at_max_corr <= 0 && max_corr >= min_corr) {
+          results <- rbind(results, data.frame(Predator = pred, Prey = prey_taxa,
+                                               Max_Correlation = max_corr, Lag = lag_at_max_corr))
+        }
+      }
+    } else {print("Warning, names of metaweb not in time series")}
+  }
+  
+  return(results)
+}
+```
+
+
+```{r}
+Correlation_lags <- pw_ccf(seasonal_data_all, METAWEB, max_lag = 3, min_corr = -1)
+CORR_WEB <- Correlation_lags %>% 
+  select(Prey, Predator, Max_Correlation, Lag) %>% 
+  as_tbl_graph(, directed = TRUE)
+CORR_WEB
+
+Correlation_lags
+```
+
+
+# Node Data
+
+```{r}
+# Trait information per functional group
+Autotrophic_protist <- trait_18S %>% 
+  filter(Phototrophy == 1,
+         is.na(Heterotrophy)) %>% 
+  mutate(FG = "Autotrophic_protist")
+
+Heterotrophic_protist <- trait_18S %>% 
+  filter(Heterotrophy == 1,
+         is.na(Phototrophy)) %>% 
+  mutate(FG = "Heterotrophic_protist")
+
+Mixotrophic_protist <- trait_18S %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         Heterotrophy == 1,
+         Phototrophy == 1) %>% 
+  mutate(FG = "Mixotrophic_protist")
+
+Omnivorous_zooplankton <- trait_18S %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "omnivore") %>% 
+  mutate(FG = "Omnivorous_zooplankton")
+
+Carnivorous_zooplankton <- trait_18S %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "carnivore") %>% 
+  mutate(FG = "Carnivorous_zooplankton")
+
+Pelagic_fish <- trait_18S %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "fish") %>% 
+  mutate(FG = "Pelagic_fish")
+
+# Information about abundance peaks from TS data
+
+peaks <- seasonal_data_all %>%
+  filter(year(Sample_date) == 2017) %>% 
+  pivot_longer(!1, names_to = "Taxa", values_to = "signal") %>% 
+  group_by(Taxa) %>%
+  slice_max(signal, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  arrange(Sample_date) %>% 
+  #filter(Taxa %in% colnames(adj_matrix)) %>%
+  select(Taxa, Date_max = Sample_date)
+
+# Merge all Node data
+Node_Data <- bind_rows(Autotrophic_protist,
+          Heterotrophic_protist,
+          Mixotrophic_protist,
+          Omnivorous_zooplankton,
+          Carnivorous_zooplankton,
+          Pelagic_fish) %>% 
+  left_join(peaks, by = "Taxa") %>%
+  filter(Taxa %in% pull(CORR_WEB, name)) %>% 
+  select(name = Taxa, FG, Sizeclass, SIzeRange, Date_max,
+         Phylum, Class, Order, Family, Genus,
+         Phototrophy, Heterotrophy, Mixotrophy, HAB)
+```
+
+Common Node-Specific Metrics in tidygraph
+	•	Degree centrality: Number of edges connected to a node.
+	•	Betweenness centrality: Measures the frequency a node is part of the shortest paths between other nodes.
+	•	Closeness centrality: Inverse of the average distance to all other nodes.
+	•	Eigenvector centrality: Measures influence based on the connections of a node’s neighbors.
+	•	PageRank: Google’s algorithm for ranking webpages, adapted for graphs.
+	•	Trophic position: For directed graphs, measures trophic level.
+	
+	
+	
+```{r}
+# Functional groups
+functional_groups <- c(
+  "Autotrophic_protist",
+  "Mixotrophic_protist",
+  "Heterotrophic_protist",
+  "Omnivorous_zooplankton",
+  "Carnivorous_zooplankton",
+  "Pelagic_fish"
+)
+
+# Corresponding colors
+colors <- c(
+  "Autotrophic_protist" = "#66C2A5",
+  "Mixotrophic_protist" = "#FC8D62",
+  "Heterotrophic_protist" = "#FFD92F",
+  "Omnivorous_zooplankton" = "#8DA0CB",
+  "Carnivorous_zooplankton" = "#3288BD",
+  "Pelagic_fish" = "#E78AC3"
+)
+
+Metrics_levels <- c(
+  "In_Degree",
+  "Out_Degree",
+  "Degree_Centrality",
+  "Closeness_Centrality",
+  "Betweenness_Centrality",
+  "Eigenvector",
+  "Trophic_level",
+  "Num_Paths"
+)
+
+CORR_WEB_NODETRAITS
+```
+
+	
+# Network Analysis
+```{r}
+# Add Node data to network
+CORR_WEB_NODETRAITS <- CORR_WEB %>% 
+  activate(nodes) %>% 
+  left_join(Node_Data, by = "name") %>%
+  activate(edges) %>% 
+  filter(Max_Correlation > 0.5) %>%
+  # Add Node specific metrics
+  activate(nodes) %>%
+  mutate(FG = factor(FG, levels = functional_groups)) %>%
+  mutate(
+    degree = centrality_degree(mode = "total"),        # Degree centrality
+    betweenness = centrality_betweenness(), # Betweenness centrality
+    closeness = centrality_closeness(),  # Closeness centrality
+    eigenvector = centrality_eigen(),
+    Month = month(Date_max)
+  )
+
+```
+
+
+```{r}
+# Spring
+p0 <- CORR_WEB_NODETRAITS %>%
+  filter(degree != 0) %>%
+  filter(month(Date_max) %in% c(3,4,5)) %>% 
+  ggraph() +
+  geom_edge_link(arrow = arrow(length = unit(2, 'mm')),
+                 aes(alpha = Max_Correlation*0.1)) +
+  geom_node_point(aes(colour = FG ,alpha = Sizeclass, size = Sizeclass)) +
+  geom_node_text(aes(label = name), size = 3, vjust = 0.4) +
+  theme_graph() +
+  scale_color_manual(values = colors)
+p0
+```
+```{r}
+# Summer
+p0 <- CORR_WEB_NODETRAITS %>%
+  filter(degree != 0) %>%
+  filter(month(Date_max) %in% c(6,7,8)) %>% 
+  ggraph() +
+  geom_edge_link(arrow = arrow(length = unit(2, 'mm')),
+                 aes(alpha = Max_Correlation*0.1)) +
+  geom_node_point(aes(colour = FG ,alpha = Sizeclass, size = Sizeclass)) +
+  geom_node_text(aes(label = name), size = 3, vjust = 0.4) +
+  theme_graph() +
+  scale_color_manual(values = colors)
+p0
+```
+```{r}
+# Winter
+p0 <- CORR_WEB_NODETRAITS %>%
+  filter(degree != 0) %>%
+  filter(month(Date_max) %in% c(9, 10, 11)) %>% 
+  ggraph() +
+  geom_edge_link(arrow = arrow(length = unit(2, 'mm')),
+                 aes(alpha = Max_Correlation*0.1)) +
+  geom_node_point(aes(colour = FG ,alpha = Sizeclass, size = Sizeclass)) +
+  geom_node_text(aes(label = name), size = 3, vjust = 0.4) +
+  theme_graph() +
+  scale_color_manual(values = colors)
+p0
+```
+```{r}
+# Winter
+p0 <- CORR_WEB_NODETRAITS %>%
+  filter(degree != 0) %>%
+  filter(month(Date_max) %in% c(12, 1, 2)) %>% 
+  ggraph() +
+  geom_edge_link(arrow = arrow(length = unit(2, 'mm')),
+                 aes(alpha = Max_Correlation*0.1)) +
+  geom_node_point(aes(colour = FG ,alpha = Sizeclass, size = Sizeclass)) +
+  geom_node_text(aes(label = name), size = 3, vjust = 0.4) +
+  theme_graph() +
+  scale_color_manual(values = colors)
+p0
+```
+
+
+
+```{r}
+P1 <- CORR_WEB_NODETRAITS %>% 
+  activate(nodes) %>% 
+  as_tibble() %>%
+  select(name, FG, Sizeclass, Date_max,
+         degree, betweenness, closeness, eigenvector) %>% 
+  pivot_longer(5:8, names_to = "Metric", values_to = "Value") %>%
+  ggplot(aes(label = name)) +
+  geom_point(aes(Date_max, Value, colour = FG)) +
+  geom_smooth(aes(Date_max, Value, colour = FG), se = F) +
+  facet_wrap("Metric", scales = "free") +
+  scale_color_manual(values = colors) +
+  theme_minimal()
+
+plotly::ggplotly(P1)
+CORR_WEB_NODETRAITS %>% 
+  activate(nodes) %>% 
+  as_tibble() %>%
+  select(name, FG, Sizeclass, Date_max,
+         degree, betweenness, closeness, eigenvector) %>%
+  mutate(Sizeclass = factor(Sizeclass)) %>% 
+  pivot_longer(5:8, names_to = "Metric", values_to = "Value") %>%
+  ggplot() +
+  geom_point(aes(Date_max, Value, colour = Sizeclass)) +
+  geom_smooth(aes(Date_max, Value, colour = Sizeclass), se = F) +
+  facet_wrap("Metric", scales = "free") +
+  #scale_color_manual(values = colors) +
+  theme_minimal()
+
+
+```
+
+
+```{r}
+Node_Data
+p4 <- seasonal_data_all %>% 
+  pivot_longer(!1, names_to = "name", values_to = "RA") %>%
+  group_by(name) %>% 
+  mutate(RA = RA / max(RA)) %>% 
+  filter(year(Sample_date) == 2017) %>%
+  filter(name %in% Node_Data$name) %>% 
+  left_join(Node_Data, by = "name") %>% 
+  mutate(Month = month(Date_max)) %>%
+  mutate(FG = factor(FG, levels = functional_groups)) %>%
+  ggplot() +
+  geom_line(aes(Sample_date, RA,  group = name, colour = FG), alpha = 0.9,
+            linewidth = 0.3) +
+  facet_wrap("Month", scales = "free", ncol = 3) +
+  scale_color_manual(values = colors) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+p4
+plotly::ggplotly(p4)
+```
+
+
+
+
+# _____OLD CODE _______
 
 
 # 3. Define vectors for filtering
@@ -584,13 +1036,14 @@ fish_zp <- pw_ccf(species_matrix, pelagic_fish, unique(Dataset_COI$Taxa), min_co
 
 ```{r}
 
-df <- bind_rows(fish_zp, zp_zp, zp_pzp, zp_pp, pzp_pp) %>% 
-  filter(Max_Correlation > 0.45) %>% 
+#df <- bind_rows(fish_zp, zp_zp, zp_pzp, zp_pp, pzp_pp) %>% 
+#  filter(Max_Correlation > 0.45) %>% 
+#  select(Predator, Prey)
+df <- result %>% 
   select(Predator, Prey)
-
 # Get all unique taxa
 all_taxa <- unique(c(df$Predator, df$Prey))
-
+all_taxa
 # Initialize square adjacency matrix
 adj_matrix <- matrix(0, nrow = length(all_taxa), ncol = length(all_taxa),
                      dimnames = list(all_taxa, all_taxa))
@@ -646,6 +1099,20 @@ filtered_matrix <- adj_matrix[day_taxa, day_taxa, drop = FALSE] %>%
 graph <- graph_from_adjacency_matrix(t(filtered_matrix), mode = "directed", weighted = NULL)
 }
 
+
+graph <- graph_from_adjacency_matrix(t(adj_matrix), mode = "directed", weighted = NULL)
+
+vertex_connectivity(graph)
+components(graph)$membership %>%  unique()
+
+plot(graph)
+
+layout_sugiyama <- layout_with_sugiyama(graph)
+plot(graph, layout = layout_sugiyama$layout,
+     vertex.size = 1, 
+     vertex.label.cex = 0.7,
+     vertex.color = "skyblue",
+     edge.arrow.size = 0.2)
 ```
 
 	Global Metrics
@@ -694,6 +1161,10 @@ for (current_date in All_dates) {
   # Clustering coefficient
   clustering_coeff <- transitivity(graph, type = "average")
   
+  # Connectivity
+  vertex_connectivity <- vertex_connectivity(graph)
+  edge_connectivity <- edge_connectivity(graph)
+  
   # Number of nodes
   num_nodes <- vcount(graph)
 
@@ -709,7 +1180,9 @@ for (current_date in All_dates) {
     Modularity = modularity_score,
     Clustering_Coefficient = clustering_coeff,
     Number_nodes = num_nodes,
-    Number_links = num_links
+    Number_links = num_links,
+    Vertex_connectivity = vertex_connectivity,
+    Edge_connectivity = edge_connectivity
   ))
 }
 
@@ -728,6 +1201,8 @@ results_df %>%
         aspect.ratio = 1/2)
 
 ggsave("Figure_output/Global_Metrics.pdf")
+
+
 
 ```
 
@@ -753,7 +1228,7 @@ Node_Data <- seasonal_data_all %>%
   filter(Taxa %in% colnames(adj_matrix)) %>%
   select(Taxa, Date_max = Sample_date) %>% 
   right_join(Functional_groups, by = "Taxa")
-
+Node_Data
 
 
 ```
