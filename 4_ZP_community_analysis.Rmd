@@ -1,0 +1,563 @@
+---
+title: "4_ZP_Community_Analysis"
+
+---
+
+```{r}
+# Data import
+
+library(readxl)
+#library(phyloseq)
+
+
+# All data format modifications and filtering and plotting
+library(tidyverse)
+'%!in%' <- function(x,y)!('%in%'(x,y))
+source("Code/Functions.R")
+library(zoo)
+
+# Statistical tools
+library(vegan)
+
+# Specific plotting tools
+library(ggpubr)
+library(paletteer)
+library(viridis)
+library(cowplot)
+#library(ggnewscale)
+source("Code/scales_and_themes.R")
+
+# Make sure tidyverse is the latest loaded package
+detach("package:tidyverse", unload=TRUE)
+library(tidyverse)
+
+
+# Custom color scale for depths
+depth_colors <- c("0" = "#add8e6",    # Light blue for 0 m
+                  "5" = "#87ceeb",    # Sky blue for 5 m
+                  "30" = "#4682b4",   # Steel blue for 30 m
+                  "100" = "#00008b",
+                  "260" = "black")  # Dark blue for 100 m
+```
+
+
+```{r}
+Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
+#Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
+Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
+```
+
+
+```{r}
+Dataset_Bottle %>% 
+  filter(year(date) == 2017) %>% 
+  #filter(line_out_depth == 5) %>%
+  select(date, line_out_depth, `chla_Bulk GF/F`, no2_no3_um,
+         Temperature, Salinity) %>%
+  pivot_longer(!1:2) %>%
+  mutate(name = factor(name, levels = c(
+    "Temperature", "Salinity", "chla_Bulk GF/F", "no2_no3_um"
+  ))) %>% 
+  filter(is.na(value) == FALSE) %>%
+  mutate(line_out_depth = factor(line_out_depth)) %>% 
+  ggplot() +
+  geom_line(aes(date, value, color = line_out_depth)) +
+  facet_wrap("name", scales = "free", ncol = 2) +
+  scale_color_manual(values = depth_colors) +
+  theme_minimal(10) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/Bottle_Data_4.pdf")
+
+```
+
+
+
+# 1. Plot eDNA profiles:
+
+### COI
+
+```{r}
+# Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
+complete_data <- Dataset_COI %>%
+  filter(Line_out_depth %in% c(0,5,30,100)) %>%
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>% 
+  mutate(Sample_date = as.Date(Sample_date)) %>% 
+  #filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(RA_Index = 0)) %>% 
+  # Ensure dates are properly ordered after completion
+  arrange(Sample_date, Taxa, Line_out_depth)
+
+
+strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
+                                to = max(complete_data$Sample_date),
+                                by = "day")
+
+smoothed_data <- complete_data %>%
+  # Expand to include all combinations of Taxa, Depth, and weekly dates
+  group_by(Taxa, Line_out_depth) %>%
+  complete(Sample_date = strict_weekly_dates) %>%
+  arrange(Sample_date) %>%
+  # Interpolate missing values in RA_Index within each group
+  mutate(RA_Index = ifelse(is.na(RA_Index),
+                           na.approx(RA_Index, rule = 2, na.rm = FALSE),
+                           RA_Index)) %>%
+  # Apply 2-week rolling mean for smoothing (7-day intervals)
+  mutate(Smoothed_Relative_Abundance = rollmean(RA_Index, k = 14, fill = NA, align = "center")) %>%
+  ungroup() %>%
+  # Filter to include only rows with Smoothed_Relative_Abundance calculated
+  filter(!is.na(Smoothed_Relative_Abundance)) %>% 
+  filter(Sample_date %in% strict_weekly_dates)
+
+
+
+
+```
+
+
+
+```{r}
+smoothed_data %>%
+  #filter(Taxa == "Acartia longiremis") %>% 
+  ggplot() +
+  geom_line(aes(Sample_date, Smoothed_Relative_Abundance, colour = Line_out_depth)) +
+  scale_colour_manual(values = depth_colors) +
+  facet_wrap("Taxa")
+
+
+smoothed_data %>%
+  mutate(Line_out_depth = factor(c(100, 30, 5, 0))) %>% 
+  #filter(Taxa == "Acartia longiremis") %>% 
+  ggplot() +
+  geom_raster(aes(Sample_date, Line_out_depth, fill = Smoothed_Relative_Abundance)) +
+  #scale_colour_manual(values = depth_colors) +
+  facet_wrap("Taxa")
+
+
+smoothed_data %>%
+  mutate(eDNA_index = Smoothed_Relative_Abundance) %>% 
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c(100, 30, 5, 0))) %>% 
+  ggplot() +
+  geom_raster(aes(Sample_date, Line_out_depth, fill = eDNA_index)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  
+  #geom_text(data = trait_summary_mod,
+  #          aes(x = date("2018-07-01"), y = "0",
+  #              label = trophic_cluster),
+  #          size = 2) +
+  facet_wrap("Taxa", ncol = 4) +
+  #scale_y_reverse() +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_viridis(option = "H") +
+  scale_fill_gradient2(high = '#4daf4a',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4)
+
+ggsave("Figure_output/eDNA_profiles_ZP.pdf")
+```
+
+
+### 18S 
+
+```{r}
+# Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
+complete_data <- Dataset_18S %>%
+    filter(Phylum != "Metazoa") %>%
+    filter(Phylum %in% c(
+    "Chlorophyta",
+    "Cryptophyta",
+    "Dinoflagellata",
+    "Haptophyta",
+    "Ochrophyta"
+  )) %>% 
+  filter(is.na(Genus)==FALSE) %>% 
+  filter(Line_out_depth %in% c(0,5,30,100)) %>%
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>% 
+  mutate(Sample_date = as.Date(Sample_date)) %>% 
+  #filter(Sample_date >= start_date & Sample_date <= end_date) %>% 
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(RA_Index = 0)) %>% 
+  # Ensure dates are properly ordered after completion
+  arrange(Sample_date, Taxa, Line_out_depth)
+
+
+strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
+                                to = max(complete_data$Sample_date),
+                                by = "day")
+
+smoothed_data <- complete_data %>%
+  # Expand to include all combinations of Taxa, Depth, and weekly dates
+  group_by(Taxa, Line_out_depth) %>%
+  complete(Sample_date = strict_weekly_dates) %>%
+  arrange(Sample_date) %>%
+  # Interpolate missing values in RA_Index within each group
+  mutate(RA_Index = ifelse(is.na(RA_Index),
+                           na.approx(RA_Index, rule = 2, na.rm = FALSE),
+                           RA_Index)) %>%
+  # Apply 2-week rolling mean for smoothing (7-day intervals)
+  mutate(Smoothed_Relative_Abundance = rollmean(RA_Index, k = 14, fill = NA, align = "center")) %>%
+  ungroup() %>%
+  # Filter to include only rows with Smoothed_Relative_Abundance calculated
+  filter(!is.na(Smoothed_Relative_Abundance)) %>% 
+  filter(Sample_date %in% strict_weekly_dates)
+
+
+
+
+```
+
+
+
+```{r}
+important_phytoplankton_taxa <- c("Actinoptychus", "Akashiwo", "Alexandrium", "Apedinella", 
+                                  "Asterionellopsis", "Asteromphalus", "Attheya", "Aureococcus", 
+                                  "Azadinium", "Bacillaria", "Bathycoccus", "Biecheleria", 
+                                  "Braarudosphaera", "Cerataulina", "Chaetoceros", "Chlamydomonas", 
+                                  "Chrysochromulina", "Corethron", "Coscinodiscus", "Cyclotella", 
+                                  "Cylindrotheca", "Dactyliosolen", "Dictyocha", "Dinophysis", 
+                                  "Ditylum", "Fragilidium", "Gymnodinium", "Guinardia", 
+                                  "Heterocapsa", "Karenia")
+
+
+smoothed_data %>%
+  filter(Taxa %in% important_phytoplankton_taxa) %>% 
+  mutate(eDNA_index = Smoothed_Relative_Abundance) %>% 
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c(100, 30, 5, 0))) %>% 
+  ggplot() +
+  geom_raster(aes(Sample_date, Line_out_depth, fill = eDNA_index)) +
+  geom_vline(xintercept = datebreaks, color = "#F5F5F5", size = 0.2, alpha = 0.8) +
+  geom_vline(xintercept = yearbreaks, color = "grey", size = 0.2, alpha = 0.8) +
+  
+  #geom_text(data = trait_summary_mod,
+  #          aes(x = date("2018-07-01"), y = "0",
+  #              label = trophic_cluster),
+  #          size = 2) +
+  facet_wrap("Taxa") +
+  #scale_y_reverse() +
+  scale_x_date(date_labels="%b %y", breaks  = datebreaks) +
+  #scale_fill_viridis(option = "H") +
+  scale_fill_gradient2(high = '#4daf4a',
+                       low = "white") +
+  theme_minimal_vgrid(font_size = 8) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
+        #legend.position="none",,
+        aspect.ratio = 1/4)
+
+ggsave("Figure_output/eDNA_profiles_PP.pdf")
+
+```
+
+
+
+# 2. Trait data
+
+```{r}
+trait_dataset <- read_csv("Data_import/Traits/trait_dataset_level2-2023-09-14.csv")
+trait_dataset$scientificName
+
+Taxa <- Dataset_COI %>% 
+  mutate(Taxa = ifelse(Taxa %!in% trait_dataset$scientificName, Genus, Taxa)) %>% 
+  pull(Taxa) %>% unique()
+
+Taxa
+
+trait_mat <- trait_dataset %>% 
+  filter(scientificName %in% Taxa) %>% 
+  filter(traitName %in% traits) %>% 
+  select(scientificName, traitName, traitValue) %>% 
+  mutate(traitValue = as.numeric(traitValue)) %>% 
+  pivot_wider(names_from = traitName, values_from = traitValue) %>% 
+  mutate_all(~replace(., is.na(.), 0)) %>%
+  mutate(bodyLengthMax = ifelse(bodyLengthMax == 0, 0,log(bodyLengthMax)+1)) %>%
+  mutate(Taxa = scientificName)
+  #column_to_rownames("scientificName") %>% 
+  #as.matrix()
+
+trait_mat
+
+trait_dataset %>% 
+  pull(traitName) %>% unique()
+
+
+species_mat <- comm %>% 
+  as.matrix() %>% 
+  t()
+
+
+
+```
+
+
+# 2. CCA 
+
+
+## Prepare data
+```{r}
+# Prepare comm and env datasets:
+
+comm <- Dataset_COI %>%
+  #filter(Line_out_depth %!in% c(0)) %>%
+  mutate(Taxa = ifelse(Taxa %!in% trait_dataset$scientificName, Genus, Taxa)) %>% 
+  dplyr::group_by(Hakai_ID, Taxa) %>% 
+  summarise(Index = mean(RA_Index)) %>%
+  pivot_wider(names_from = "Taxa", values_from = "Index") %>%
+  mutate_all(~replace(., is.na(.), 0)) %>% 
+  filter(Hakai_ID != "QMIC2470") %>%          ####### WARNING - FILTERED OUTLIER SAMPLE. Verify!
+  arrange(Hakai_ID) %>%
+  column_to_rownames("Hakai_ID")
+
+comm
+
+env <- Dataset_Bottle %>% 
+  arrange(hakai_id) %>%
+  mutate(Depth = factor(line_out_depth),
+         Month = month(date)) %>%
+  filter(hakai_id %in% row.names(comm)) %>% 
+  column_to_rownames("hakai_id") %>% 
+  # Chl to 0
+  mutate(chla_20um = replace(chla_20um, is.na(chla_20um), 0),
+         chla_3um = replace(chla_3um, is.na(chla_3um), 0),
+         `chla_GF/F` = replace(`chla_GF/F`, is.na(`chla_GF/F`), 0))
+
+# Verify that rownames are identical!
+tibble(comm = row.names(comm),
+       env = row.names(env))
+```
+
+## Define CCA
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             chla_20um + chla_3um +`chla_GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.exclude)
+vif.cca(mod)
+
+#mod <- cca(comm ~
+#             Temperature +
+#             chla_20um + chla_3um +`chla_GF/F`,
+#           data = env,
+#           na.action = na.exclude)
+#vif.cca(mod)
+```
+
+## Extract Taxa
+```{r}
+# Taxa cca scores
+cca_taxa <- scores(mod)$species %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Taxa") %>% 
+  left_join(trait_mat, by = "Taxa")
+cca_taxa
+
+# Environmental cca scores
+cca_variable <- scores(mod)$biplot %>%
+  as.data.frame() %>% 
+  rownames_to_column("Variable")
+
+
+# Sample metadata...
+sample_date_depth <- env %>%
+  rownames_to_column("Hakai_ID") %>% 
+  select(1:3)
+
+# Sample cca scores, join with metadata
+cca_sample <- scores(mod)$site %>%
+  as.data.frame() %>% 
+  rownames_to_column("Hakai_ID") %>% 
+  left_join(sample_date_depth, by = "Hakai_ID") %>%
+  mutate(line_out_depth = ifelse(line_out_depth == 250, 260, line_out_depth)) %>% 
+  mutate(Depth = factor(line_out_depth,
+                        levels = c(260, 100, 30, 5, 0)),
+         Month = month(date, label = TRUE))
+```
+
+
+```{r}
+library(ggrepel)
+
+ggplot() +
+  geom_point(data = cca_sample, aes(x = CCA1, y = CCA2, color = Month), size = 1, alpha = 0.8) +
+  
+  #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
+  #ggrepel::geom_text_repel(data = cca_taxa,
+  #                aes(x = CCA1, y = CCA2, label = Taxa),
+  #                #nudge_y = -0.05,
+  #                size = 2.5, max.overlaps = 30) +
+  
+  geom_segment(data = cca_variable,
+               aes(x = 0, y = 0, xend = CCA1*2, yend = CCA2*2),
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  geom_text_repel(data = cca_variable,
+                           aes(x = CCA1*2.5, y = CCA2*2.5, label = Variable),
+                           color = "blue",
+                           size = 3.5) +
+  scale_color_manual(values = seasonal_colors) +
+  theme_minimal(6) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/CCA_month.pdf", width = 4, height = 4)
+```
+
+```{r}
+library(ggrepel)
+
+ggplot() +
+  geom_point(data = cca_sample, aes(x = CCA1, y = CCA2, color = Depth), size = 1, alpha = 0.8) +
+  
+  #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
+  #ggrepel::geom_text_repel(data = cca_taxa,
+  #                aes(x = CCA1, y = CCA2, label = Taxa),
+  #                #nudge_y = -0.05,
+  #                size = 2.5, max.overlaps = 30) +
+  
+  geom_segment(data = cca_variable,
+               aes(x = 0, y = 0, xend = CCA1*2, yend = CCA2*2),
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  geom_text_repel(data = cca_variable,
+                           aes(x = CCA1*2.5, y = CCA2*2.5, label = Variable),
+                           color = "blue",
+                           size = 3.5) +
+  scale_color_manual(values = seasonal_colors) +
+  theme_minimal(6) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/CCA_depth.pdf", width = 4, height = 4)
+```
+
+
+
+```{r}
+library(ggrepel)
+
+ggplot() +
+  geom_point(data = cca_sample, aes(x = CCA1, y = CCA2, color = Depth), size = 1, alpha = 0.8) +
+  
+  #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
+  ggrepel::geom_text_repel(data = cca_taxa,
+                  aes(x = CCA1, y = CCA2, label = Taxa),
+                  #nudge_y = -0.05,
+                  size = 2.5, max.overlaps = 30) +
+  
+  #geom_segment(data = cca_variable,
+  #             aes(x = 0, y = 0, xend = CCA1*2, yend = CCA2*2),
+  #             arrow = arrow(length = unit(0.25, "cm"))) +
+  #geom_text_repel(data = cca_variable,
+  #                         aes(x = CCA1*2.5, y = CCA2*2.5, label = Variable),
+  #                         color = "blue",
+  #                         size = 3.5) +
+  scale_color_manual(values = seasonal_colors) +
+  theme_minimal(6) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+ggsave("Figure_output/CCA_taxa.pdf", width = 4, height = 4)
+```
+
+
+
+```{r}
+library(ggrepel)
+
+ggplot() +
+  geom_point(data = cca_sample, aes(x = CCA1, y = CCA2), size = 1, alpha = 0.8) +
+  scale_color_manual(values = seasonal_colors) +
+  
+  ggnewscale::new_scale_colour() +
+  
+  #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
+  ggrepel::geom_text_repel(data = cca_taxa,
+                  aes(x = CCA1, y = CCA2, label = Taxa,
+                      colour = log10(bodyLengthMax)
+                      ),
+                  #nudge_y = -0.05,
+                  size = 2.5, max.overlaps = 30) +
+  scale_colour_continuous(type = "viridis") +
+  #geom_segment(data = cca_variable,
+  #             aes(x = 0, y = 0, xend = CCA1*2, yend = CCA2*2),
+  #             arrow = arrow(length = unit(0.25, "cm"))) +
+  #geom_text_repel(data = cca_variable,
+  #                         aes(x = CCA1*2.5, y = CCA2*2.5, label = Variable),
+  #                         color = "blue",
+  #                         size = 3.5) +
+  #scale_color_manual(values = seasonal_colors) +
+  theme_minimal(6) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+cca_taxa
+
+ggsave("Figure_output/CCA_bodyLengthMax.pdf", width = 4, height = 4)
+```
+
+```{r}
+ggplot() +
+  geom_point(data = cca_sample, aes(x = CCA1, y = CCA2), size = 1, alpha = 0.8) +
+
+  
+  #geom_point(data = cca_taxa, aes(x = CCA1, y = CCA2), color = "red", size = 0.5) +
+  ggrepel::geom_text_repel(data = cca_taxa,
+                  aes(x = CCA1, y = CCA2, label = Taxa,
+                      colour = factor(TG.carnivore)
+                      ),
+                  #nudge_y = -0.05,
+                  size = 2.5, max.overlaps = 30) +
+  #geom_segment(data = cca_variable,
+  #             aes(x = 0, y = 0, xend = CCA1*2, yend = CCA2*2),
+  #             arrow = arrow(length = unit(0.25, "cm"))) +
+  #geom_text_repel(data = cca_variable,
+  #                         aes(x = CCA1*2.5, y = CCA2*2.5, label = Variable),
+  #                         color = "blue",
+  #                         size = 3.5) +
+  #scale_color_manual(values = seasonal_colors) +
+  theme_minimal(6) +
+  #labs(x = "Zooplankton", y = "Microeukaryotes", title = "Correlation between Taxa with 0-4 weeks lag") +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(aspect.ratio = 1)
+
+cca_taxa
+
+ggsave("Figure_output/CCA_Carnivores.pdf", width = 4, height = 4)
+```
+
+
+
+
+# STL demo
+
+
+```{r}
+dat <- Interpolated_COI_Data %>%
+  # Extract seasonal data from STL time series, per taxa
+  filter(Taxa == "Acartia longiremis")
+
+    ts_data <- ts(dat$Abundance, start = c(2017, 8), frequency = 365)  # Weekly frequency
+    stl_decomposition <- stl(ts_data, s.window = "periodic")
+
+  ungroup() %>%
+  spread(key = Taxa, value = Seasonal) %>%
+  drop_na()
+
+pdf("Figure_output/STL_decomp_Acartia.pdf", width = 6, height = 4)
+plot(stl_decomposition)
+dev.off()
+
+```
+
+

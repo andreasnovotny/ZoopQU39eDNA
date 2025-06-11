@@ -1,0 +1,312 @@
+---
+title: "CCA with stepwise reduction, QU39 Zooplankton example"
+author: "Andreas Novotny"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  html_notebook:
+    toc: true
+    toc_float:
+      collapsed: true
+---
+
+Read in required libraries and datasets:
+
+```{r message=FALSE}
+library(tidyverse) # For data manipulation
+library(vegan) # For cca and vif.cca
+library(broom) # To make model output "tidy"
+
+comm <- readRDS("Data_output/comm.RDS")
+env <- readRDS("Data_output/env.RDS")
+```
+
+# 1. Data format:
+
+CCA requires a community matrix, with sample IDs as row names, and taxa as column names:
+
+```{r}
+head(comm)
+```
+
+CCA also requires a data frame with constrains, or the environmental variables for each sample. Also here, taxa as column name:
+
+```{r}
+head(env)
+```
+
+The sample IDs of the two datasets has to be identical, and ordered in the same way. One way to check that can be to make a new data frame with the two sample IDs next to each other:
+
+```{r}
+tibble(comm = row.names(comm),
+       env = row.names(env))
+```
+
+# 2. CCA and VIF
+
+### CCA
+
+**From the help file:** *Constrained correspondence analysis is indeed a constrained method: CCA does not try to display all variation in the data, but only the part that can be explained by the used constraints. Consequently, the results are strongly dependent on the set of constraints and their transformations or interactions among the constraints. The shotgun method is to use all environmental variables as constraints. However, such exploratory problems are better analysed with unconstrained methods such as correspondence analysis ([decorana](http://127.0.0.1:28065/help/library/vegan/help/decorana), [corresp](http://127.0.0.1:28065/help/library/MASS/help/corresp)) or non-metric multidimensional scaling ([metaMDS](http://127.0.0.1:28065/help/library/vegan/help/metaMDS)) and environmental interpretation after analysis ([envfit](http://127.0.0.1:28065/help/library/vegan/help/envfit), [ordisurf](http://127.0.0.1:28065/help/library/vegan/help/ordisurf)). CCA is a good choice if the user has clear and strong a priori hypotheses on constraints and is not interested in the major structure in the data set.*
+
+First, lets anyway try CCA with all environmental variables:
+
+```{r}
+# Model all environmental parameters:
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month +
+             chla_20um + chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
+             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um + po4,
+           data = env,
+           na.action = na.omit)
+
+# CCA objects comes with an automatic plot method:
+plot(mod)
+```
+
+The output is messy and impossible to interpret.
+
+### VIF
+
+**From the help file:** *Function `vif.cca` gives the variance inflation factors for each constraint or contrast in factor constraints. In partial ordination, conditioning variables are analysed together with constraints. Variance inflation is a diagnostic tool to identify useless constraints. A common rule is that values over 10 indicate redundant constraints. If later constraints are complete linear combinations of conditions or previous constraints, they will be completely removed from the estimation, and no biplot scores or centroids are calculated for these aliased constraints. A note will be printed with default output if there are aliased constraints.*
+
+Running `vif.cca` with the model output from previous chunk:
+
+```{r}
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) #Sort by variance inflation factor:
+
+```
+
+From this table we can see that many of the environmental variables (all above 10) are likely redundant.
+
+# 3. Step-wise reduction
+
+Now, lets iterate through the `cca` and `vif.cca` functions, one by one, removing the redundant variables. Starting by repeating the model above, removing PO4 that had the highest variance inflation factor:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month +
+             chla_20um + chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
+             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x)
+```
+
+Remove higherst inflation factor, chla_20um, and repeat model:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
+             phaeo_20um + phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) %>% 
+  head(1)
+```
+
+Remove highest inflation factor, phaeo_20um, and repeat model:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um +`chla_GF/F` + `chla_Bulk GF/F` +
+             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) %>% 
+  head(1)
+```
+
+Remove highest inflation factor, chla_GF/F, and repeat model:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um + `chla_Bulk GF/F` +
+             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) %>% 
+  head(1)
+```
+
+Remove highest inflation factor, chla_Bulk GF/F, and repeat model:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um +
+             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) %>% 
+  head(1)
+```
+
+Remove highest inflation factor, no2_no3_um, and repeat model:
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um +
+             phaeo_3um + `phaeo_GF/F` + `phaeo_Bulk GF/F`,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x) %>% 
+  head(1)
+```
+
+Remove highest inflation factor, phaeo_3um, and repeat model:
+
+```{r}
+#remove phaeo_3um
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             Depth + Month + 
+             chla_3um +
+             `phaeo_GF/F` + `phaeo_Bulk GF/F`,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x)
+```
+
+By now, all environmental constrains have variation inflation factors lower than 10. Lets look at this reduced model:
+
+```{r}
+plot(mod)
+```
+
+Much easier to interpret!
+
+# 4. A priori stepwise reduction.
+
+**From the help file:** *CCA is a good choice if the user has clear and strong a priori hypotheses on constraints and is not interested in the major structure in the data set.*
+
+A lot of the redundance in this data set seems to originate in the many various ways to measure phytoplankton pigments. We have values of both chlorophyll and phaeofytine, both bulk and size fractionated. When using the step-wise reduction above, we ended up with a set of parameters that are quite difficult to motivate.\
+\
+Rather than starting with all variables, we will now choose some that we have a reason to believe will be the most influential, from a mechanistic perspective. I chose to focus on chlorophyll rather than phaeofytine, and I only include the size-fractionated chl, not the bulk:\
+
+```{r}
+# Model all relevant environmental parameters
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             chla_20um + chla_3um +`chla_GF/F` + 
+             no2_no3_um + po4,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x)
+```
+
+Now, lets do a step-wise reduction of the model. Removing PO4:\
+
+```{r}
+mod <- cca(comm ~
+             Temperature + Salinity + PAR + Turbidity + O2 +
+             chla_20um + chla_3um +`chla_GF/F` +
+             no2_no3_um,
+           data = env,
+           na.action = na.omit)
+vif.cca(mod) %>% 
+  tidy() %>% 
+  arrange(-x)
+
+```
+
+And already, all remaining constraining variables have a VIF below 10.\
+The final model looks like this:\
+
+```{r}
+plot(mod)
+```
+
+# 5. Customize plot using ggplot
+
+There are more useful ways to visualize the CCA model, than the default plotting method. By extracting the data from cca, we can customize the plot in the way we find suitable:
+
+Extracting environmental constraining factors CCA coordinates:
+```{r}
+cca_env = as.data.frame(mod$CCA$biplot) %>% 
+  rownames_to_column("env")
+head(cca_env)
+```
+
+Extracting CCA coordinates of Taxa:
+```{r}
+cca_taxa = as.data.frame(mod$CCA$v) %>% 
+  rownames_to_column("Taxa")
+head(cca_taxa)
+```
+
+```{r}
+cca_taxa <- scores(mod)$species %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Taxa")
+
+cca_sample <- scores(mod)$site %>%
+  as.data.frame() %>% 
+  rownames_to_column("Hakai_ID")
+
+cca_variable <- scores(mod)$biplot %>%
+  as.data.frame() %>% 
+  rownames_to_column("Variable")
+```
+
+
+```{r}
+plot <-  ggplot() +
+  
+  # Plot CCA coordinates of taxa, as points and text
+  geom_point(data = veg_2, aes(x = CCA1, y = CCA2), color = "red") +
+  ggrepel::geom_text_repel(data = veg_2,
+                           aes(x = CCA1, y = CCA2, label = Taxa),
+                           nudge_y = -0.05) +
+  
+  # Add environmental variables as arrowas and text
+  geom_segment(data = veg_1,
+               aes(x = 0, y = 0, xend = CCA1, yend = CCA2),
+               arrow = arrow(length = unit(0.25, "cm"))) +
+  ggrepel::geom_text_repel(data = veg_1,
+                           aes(x = CCA1, y = CCA2, label = env),
+                           nudge_y = -0.05,
+                           color = "blue",
+                           size = 5) +
+  theme_bw() +
+  theme(axis.text = element_text(size = 16),
+        axis.title = element_text(size = 18))
+plot
+
+```
