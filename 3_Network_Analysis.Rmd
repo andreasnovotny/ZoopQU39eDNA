@@ -84,6 +84,7 @@ Functional_Traits <- read_excel("Data_import/Functional_Traits.xlsx")
 
 Extract some taxonomy tables, used to construct trait dataset
 ```{r}
+Dataset_18S
 taxatab_18S <- Dataset_18S %>%
   group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
   summarise()
@@ -322,8 +323,20 @@ seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample
   filter(Sample_date >= start_date & Sample_date <= end_date)
 seasonal_data_all
 
+
+
+
 ## seasonal_data_all will be used for correlation analysis later.
 ```
+
+
+
+### Test
+
+### End Test
+
+
+
 
 Test matrix of just TS data
 
@@ -348,7 +361,7 @@ rm(Dataset_12S, Dataset_18S, Dataset_COI)
 # Interpolated Data
 rm(Interpolated_12S_Data, Interpolated_18S_Data, Interpolated_COI_Data)
 # STL Seasonal Data
-rm(seasonal_data_COI, seasonal_data_18S, seasonal_data_12S, smoothed_data
+rm(seasonal_data_COI, seasonal_data_18S, seasonal_data_12S)
 ```
 
 
@@ -478,6 +491,7 @@ Auto-correlations with no lags of all involved species.
 ```{r}
 correlation_matrix_all <- cor(seasonal_data_all %>%
                                 select(-Sample_date), use = "pairwise.complete.obs")
+
 ```
 
 ## b. With lags
@@ -520,6 +534,11 @@ pw_ccf <- function(mat, adj.df, max_lag = 3, min_corr = -1) {
   
   return(results)
 }
+
+
+seasonal_data_all
+
+
 ```
 
 
@@ -553,6 +572,16 @@ dev.off()
 
 
 ```
+
+# TEST with kendalls tau correlation instead of pearson
+
+```{r}
+seasonal_data_all
+```
+
+
+
+
 
 
 
@@ -649,7 +678,7 @@ CORR_WEB_NODETRAITS <- CORR_WEB %>%
   mutate(Total_Degree = centrality_degree(mode = "total")) %>% 
   filter(Total_Degree > 0) %>% 
   
-  # Calculate Basig Node Metrics:
+  # Calculate Basic Node Metrics:
   mutate(
     In_Degree = centrality_degree(mode = "in"),
     Betweenness = centrality_betweenness(),
@@ -657,7 +686,10 @@ CORR_WEB_NODETRAITS <- CORR_WEB %>%
     Eigenvector = centrality_eigen(),
     Clustering = local_transitivity(),
     Coreness = node_coreness()
-  )
+  ) %>% 
+  mutate(Community = factor(group_walktrap()))
+  # Calculate subcommunities with short random walks:
+  
 ```
 
 Common Node-Specific Metrics in tidygraph
@@ -749,10 +781,99 @@ ggsave("Figure_output/All_Seasonality.pdf", height = 7, width = 10)
 ```{r}
 rm(CORR_WEB, CORR_WEB_NODETRAITS)
 rm(METAWEB, Correlation_lags, correlation_matrix_all, Node_Data, trophic_levels,
-   distances_to_base_1, basal_nodes)
+   distances_to_base_1, basal_nodes, Het_prot)
 ```
 
 # 6. Food Web Visualizations:
+
+## 6.0 Investigate the metaweb
+
+```{r}
+# Trait information per functional group
+Autotrophic_protist <- Functional_Traits %>% 
+  filter(Phototrophy == 1,
+         is.na(Heterotrophy)) %>% 
+  mutate(FG = "Autotrophic_protist")
+
+Heterotrophic_protist <- Functional_Traits %>% 
+  filter(Heterotrophy == 1,
+         is.na(Phototrophy)) %>% 
+  mutate(FG = "Heterotrophic_protist")
+
+Mixotrophic_protist <- Functional_Traits %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         Heterotrophy == 1,
+         Phototrophy == 1) %>% 
+  mutate(FG = "Mixotrophic_protist")
+
+Omnivorous_zooplankton <- Functional_Traits %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "omnivore") %>% 
+  mutate(FG = "Omnivorous_zooplankton")
+
+Carnivorous_zooplankton <- Functional_Traits %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "carnivore") %>% 
+  mutate(FG = "Carnivorous_zooplankton")
+
+Pelagic_fish <- Functional_Traits %>% 
+  filter(#Taxa %in% pull(CORR_WEB, name),
+         TrophicState == "fish") %>% 
+  mutate(FG = "Pelagic_fish")
+
+# Information about abundance peaks from TS data
+peaks <- seasonal_data_all %>%
+  filter(year(Sample_date) == 2017) %>% 
+  pivot_longer(!1, names_to = "Taxa", values_to = "signal") %>% 
+  group_by(Taxa) %>%
+  slice_max(signal, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  arrange(Sample_date) %>% 
+  #filter(Taxa %in% colnames(adj_matrix)) %>%
+  select(Taxa, Date_max = Sample_date)
+
+# Merge all Node data
+Node_Data <- bind_rows(Autotrophic_protist,
+          Heterotrophic_protist,
+          Mixotrophic_protist,
+          Omnivorous_zooplankton,
+          Carnivorous_zooplankton,
+          Pelagic_fish) %>% 
+  left_join(peaks, by = "Taxa") %>%
+  #filter(Taxa %in% pull(CORR_WEB, name)) %>% 
+  select(name = Taxa, FG, Sizeclass, SIzeRange, Date_max,
+         Phylum, Class, Order, Family, Genus,
+         Phototrophy, Heterotrophy, Mixotrophy, HAB)
+
+rm(Autotrophic_protist, Heterotrophic_protist, Mixotrophic_protist,
+   Omnivorous_zooplankton, Carnivorous_zooplankton, Pelagic_fish,
+   peaks, pelagic_fish, Het_prot)
+
+METAGRAPH <- METAWEB %>% 
+  select(Prey, Predator) %>% 
+  as_tbl_graph() %>%
+  activate(nodes) %>% 
+  left_join(Node_Data, by = "name")
+```
+
+
+```{r}
+
+METAGRAPH
+METAGRAPH %>% 
+  ggraph() + 
+  geom_edge_link(arrow = arrow(length = unit(3, 'mm')),
+                   alpha = 0.2) +
+    geom_node_point(aes(colour = FG), size = 2) +
+    #geom_node_text(aes(label = name), angle = -90, size = 2.5, nudge_y = -0.2) +
+    theme_graph() +
+    scale_color_manual(values = colors) +
+    theme(legend.position = "none")
+
+ggsave("Figure_output/Metaweb.png")
+```
+
+
 
 ## 6.1 Stress based layout 
 
@@ -760,9 +881,8 @@ rm(METAWEB, Correlation_lags, correlation_matrix_all, Node_Data, trophic_levels,
 Plot stress layout with Short Random Walk Communities
 ```{r}
 CORR_WEB_NODETRAITS_TL %>%
-  mutate(group = factor(group_walktrap())) %>%
-  mutate(Community = factor(ifelse(group %in% c(1,2,3,4,5,6),
-                        group, "Other"))) %>% 
+  mutate(Community = factor(ifelse(Community %in% c(1:6),
+                        Community, "Other"))) %>% 
   ggraph("stress") + 
   geom_edge_link(arrow = arrow(length = unit(3, 'mm')),
                  #aes(alpha = Max_Correlation)
@@ -820,8 +940,8 @@ ggsave("Figure_output/Network_All_MAX_TL.png", height = 7, width = 10)
 ```{r}
 CORR_WEB_NODETRAITS_TL %>%
   mutate(group = factor(group_walktrap())) %>%
-  mutate(Community = factor(ifelse(group %in% c(1,2,3,4,5,6),
-                        group, "Other"))) %>% 
+  mutate(Community = factor(ifelse(Community %in% c(1,2,3,4,5,6),
+                        Community, "Other"))) %>% 
   ggraph(x=layout_manual$x_position, y=layout_manual$y_position) + 
   geom_edge_link(arrow = arrow(length = unit(3, 'mm')),
                  #aes(alpha = Max_Correlation)
@@ -858,4 +978,318 @@ CORR_WEB_NODETRAITS_TL %>%
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'),
         #legend.position="none",,
         aspect.ratio = 1/1.5)
+
+ggsave("Figure_output/Node_Metrics.pdf", height = 7, width = 10)
 ```
+
+
+```{r}
+CORR_WEB_NODETRAITS_TL %>% 
+  as.tibble %>% 
+  arrange(-Eigenvector) %>%
+  filter(Eigenvector > 0.6) %>% 
+  select(name, Class, Date_max, SIzeRange, Total_Degree, Betweenness, Eigenvector) %>% 
+  write_csv("Figure_output/Keystone_Species.csv")
+  
+```
+
+
+## 6.4 Subset Networks:
+
+```{r}
+get_community <- function(network, community = 1) {
+  
+  names <- network %>%
+    filter(Community == community) %>% as.tibble() %>% 
+    pull(name)
+  
+  network %>% 
+    filter(node_is_connected(names, mode = "out", any = TRUE)) %>% 
+    filter(centrality_degree(mode = "total") != 0) 
+}
+
+plot_graph <- function(network) {
+  
+    ggraph(network) + 
+    geom_edge_link(arrow = arrow(length = unit(3, 'mm')),
+                   alpha = 0.2) +
+    geom_node_point(aes(colour = FG), size = 2) +
+    geom_node_text(aes(label = name), angle = -90, size = 2.5, nudge_y = -0.2) +
+    theme_graph() +
+    scale_color_manual(values = colors) +
+    theme(legend.position = "none")
+}
+
+
+
+
+CORR_WEB_NODETRAITS_TL %>% 
+  get_community(5) %>% 
+  plot_graph()
+
+  
+CORR_WEB_NODETRAITS_TL %>% 
+  get_community(7) %>%
+  Eco_Motifs() %>% 
+  ggplot() +
+  geom_bar(aes(x = 1, y = value, fill = Motif), stat= "identity")
+```
+
+
+## 6.5 Count Motifs
+
+Discover the motifs
+```{r}
+# Prey redundance
+graph_from_isomorphism_class(3, 2) %>% plot()
+#Energy transfer
+graph_from_isomorphism_class(3, 4) %>% plot()
+#prey competition
+graph_from_isomorphism_class(3, 6) %>% plot()
+#intraguild predation
+graph_from_isomorphism_class(3, 7) %>% plot()
+
+
+# These motifs includes 4 nodes and are more complex
+# All 4 node motifs can be explained by combining 3 node motifs
+graph_from_isomorphism_class(4, 3) %>% plot()
+graph_from_isomorphism_class(4, 7) %>% plot()
+graph_from_isomorphism_class(4, 12) %>% plot()
+graph_from_isomorphism_class(4, 13) %>% plot()
+graph_from_isomorphism_class(4, 14) %>% plot()
+graph_from_isomorphism_class(4, 17) %>% plot()
+
+graph_from_isomorphism_class(4, 19) %>% plot()
+graph_from_isomorphism_class(4, 20) %>% plot()
+graph_from_isomorphism_class(4, 24) %>% plot()
+graph_from_isomorphism_class(4, 29) %>% plot()
+graph_from_isomorphism_class(4, 35) %>% plot()
+graph_from_isomorphism_class(4, 41) %>% plot()
+graph_from_isomorphism_class(4, 42) %>% plot()
+graph_from_isomorphism_class(4, 43) %>% plot()
+graph_from_isomorphism_class(4, 47) %>% plot()
+graph_from_isomorphism_class(4, 76) %>% plot()
+#etc etc
+```
+
+
+
+Define function for counting motifs of a network:
+```{r}
+
+Eco_Motifs <- function(network) {
+  
+  # network is any igraph or tidygraph object
+  network %>% 
+    motifs(size = 3) %>% 
+    enframe() %>% 
+    filter(name %in% c(3,5,7,8)) %>% 
+    left_join(tibble(name = as.integer(c(3,5,7,8)),
+         Eco_Function = as.factor(c(
+           "Apperent Competition",
+           "Tritrophic Chain",
+           "Exploitative Competition",
+           "Intraguild Predation")),
+         Motif = as.character(c(
+           "A --> B <-- C",             # Igraph ID2, R index 3
+           "A --> B --> C",             # Igraph ID4, R index 5
+           "A <-- B --> C",             # Igraph ID6, R index 7
+           "A --> B <-- C && A --> C"   # Igraph ID7, R index 8
+         ))), by = "name") %>% 
+    select(Motif, Eco_Function, value)
+}
+```
+
+
+```{r}
+All_Motifs <- CORR_WEB_NODETRAITS_TL %>% 
+  Eco_Motifs() %>% 
+  mutate(Community = "All")
+
+All_Motifs <- METAGRAPH %>% 
+  Eco_Motifs() %>% 
+  mutate(Community = "Metaweb") %>% 
+  bind_rows(All_Motifs)
+
+for (i in 1:6) {
+  
+ All_Motifs <- CORR_WEB_NODETRAITS_TL %>% 
+    get_community(i) %>%
+    Eco_Motifs() %>% 
+    mutate(Community = as.character(i)) %>% 
+    bind_rows(All_Motifs)
+}
+All_Motifs
+```
+
+
+```{r}
+All_Motifs %>%
+  filter(Community != "Metaweb",
+         Community != "All") %>% 
+  mutate(Community = factor(Community, levels = c(
+    "Metaweb", "All", 5,3,2,1,6,4
+  ))) %>% 
+  mutate(Motif = paste(Eco_Function, Motif, sep = " ")) %>%
+  
+  ungroup() %>% 
+  ggplot(aes(x = Community, y = value)) +
+  geom_bar(aes(fill = Motif),stat = "identity") +
+  theme_minimal(8) +
+  theme(legend.position = "bottom",
+        legend.direction = "vertical")
+
+ggsave("Figure_output/Motifs.all.pdf", height = 3, width = 3)
+```
+
+
+
+```{r}
+All_Motifs %>%
+  mutate(Community = factor(Community, levels = c(
+    "Metaweb", "All", 5,3,2,1,6,4
+  ))) %>% 
+  mutate(Motif = paste(Eco_Function, Motif, sep = " ")) %>%
+  
+  group_by(Community) %>% 
+  mutate(value = value/sum(value)) %>%
+  
+  #group_by(Motif) %>% 
+  #mutate(value = value/max(value)) %>%
+  
+  ungroup() %>% 
+  ggplot(aes(x = Community, y = value)) +
+  geom_bar(stat = "identity") +
+  facet_wrap("Motif", scales = "free", ncol = 2) +
+  theme_minimal(8)
+
+ggsave("Figure_output/Motifs.pdf", height = 3, width = 5)
+
+```
+
+```{r}
+All_Motifs %>% 
+  select(Community, Eco_Function, value) %>% 
+  pivot_wider(names_from = Eco_Function, values_from = value) %>% 
+  mutate(`Relative Resource Competition` = `Exploitative Competition` /`Apperent Competition`) %>% 
+  mutate(Community = factor(Community, levels = c("Metaweb", "All", 5,3,2,1,6,4))) %>%
+  ggplot(aes(x = Community, y = `Relative Resource Competition`)) +
+  geom_bar(stat = "identity") +
+  theme_minimal()
+```
+
+Functional diversity based on quadruple structure:
+
+```{r}
+relevant_motifs <- CORR_WEB_NODETRAITS_TL %>%
+  motifs(size = 4) %>%
+  enframe() %>% 
+  filter(is.na(value) == FALSE,
+         value > 0) %>% 
+  pull(name)
+
+functional_diversity <- CORR_WEB_NODETRAITS_TL %>%
+  motifs(size = 4) %>% 
+  enframe() %>%
+  filter(name %in% relevant_motifs) %>%
+  filter(value != 0) %>% 
+  group_by() %>% 
+  summarise(Total = sum(value),
+            diversity = vegan::diversity(value, "shannon")) %>% 
+  mutate(Community = "All") 
+
+for (i in 1:6) {
+  
+functional_diversity <- CORR_WEB_NODETRAITS_TL %>%
+  get_community(i) %>% 
+  motifs(size = 4) %>% 
+  enframe() %>%
+  filter(name %in% relevant_motifs) %>%
+  filter(value != 0) %>% 
+  group_by() %>% 
+  summarise(Total = sum(value),
+            diversity = vegan::diversity(value, "shannon")) %>% 
+  mutate(Community = as.character(i)) %>% 
+  bind_rows(functional_diversity)
+  
+}
+functional_diversity %>% 
+  mutate(Community = factor(Community, levels = c("Metaweb", "All", 5,3,2,1,6,4))) %>% 
+  #group_by() %>%
+  #mutate(diversity = diversity/max(diversity)) %>% 
+  ggplot(aes(x = Community, y = diversity)) +
+  geom_bar(stat = "identity") +
+  theme_minimal()
+```
+
+Redundancy:
+
+```{r}
+relevant_motifs <- CORR_WEB_NODETRAITS_TL %>%
+  motifs(size = 4) %>%
+  enframe() %>% 
+  filter(is.na(value) == FALSE,
+         value > 0) %>% 
+  pull(name)
+
+redundancy <- CORR_WEB_NODETRAITS_TL %>%
+  motifs(size = 4) %>% 
+  enframe() %>%
+  filter(name %in% 20) %>%
+  mutate(Community = "All") 
+redundancy
+
+for (i in 1:6) {
+  
+functional_diversity <- CORR_WEB_NODETRAITS_TL %>%
+  get_community(i) %>% 
+  motifs(size = 4) %>% 
+  enframe() %>%
+  filter(name %in% relevant_motifs) %>%
+  filter(value != 0) %>% 
+  group_by() %>% 
+  summarise(Total = sum(value),
+            diversity = vegan::diversity(value, "shannon")) %>% 
+  mutate(Community = as.character(i)) %>% 
+  bind_rows(functional_diversity)
+  
+}
+functional_diversity %>% 
+  mutate(Community = factor(Community, levels = c("Metaweb", "All", 5,3,2,1,6,4))) %>% 
+  #group_by() %>%
+  #mutate(diversity = diversity/max(diversity)) %>% 
+  ggplot(aes(x = Community, y = diversity)) +
+  geom_bar(stat = "identity") +
+  theme_minimal()
+```
+
+
+## 6.6 Seasonal keystone species 
+
+```{r}
+CORR_WEB_NODETRAITS_TL %>%
+  get_community(5) %>% 
+  mutate(
+    In_Degree = centrality_degree(mode = "in"),
+    Betweenness = centrality_betweenness(),
+    Closeness = centrality_closeness(),
+    Eigenvector = centrality_eigen(),
+    Clustering = local_transitivity(),
+    Coreness = node_coreness()
+  ) %>% 
+  as.tibble %>% 
+  arrange(-Eigenvector) %>%
+  filter(Eigenvector > 0.6) %>% 
+  select(name, Class, Date_max, SIzeRange, Total_Degree, Betweenness, Eigenvector)
+  
+
+write_csv("Figure_output/Keystone_Species_tmp.csv")
+
+
+CORR_WEB_NODETRAITS_TL %>%
+  get_community(1) %>% 
+  plot_graph()
+```
+
+
+

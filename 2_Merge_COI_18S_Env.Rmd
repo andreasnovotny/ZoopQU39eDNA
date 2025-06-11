@@ -440,6 +440,46 @@ COI_glomm_indexed <- Seq %>%
 
 
 
+Most abundant bacteria:
+
+```{r}
+abundant_Orders <- Good_16S_QU39 |>
+  #filter(Phylum == "Cyanobacteria") |> 
+  
+  
+  #RA
+  group_by(Sample_ID, Date, Depth) |> 
+  mutate(RA = Abundance / sum(Abundance)) |> 
+  group_by(Order, Sample_ID, Date, Depth) |>
+  summarise(RA = sum(RA, na.rm = TRUE)) |> 
+  group_by(Order) |> 
+  summarise(RA = mean(RA)) |> 
+  arrange(-RA) |> 
+  filter(RA > 0.01) |> 
+  pull(Order)
+  
+  Good_16S_QU39
+  
+  abundant_Orders
+  
+```
+
+
+
+```{r}
+p <- Good_16S_QU39 |> 
+  group_by(Order, Date, Depth) |> 
+  summarise(Abundance = sum(Abundance)) |>
+  group_by(Order) |> 
+  filter(Order %in% abundant_Orders) |> 
+  ggplot() +
+  geom_bar(aes(Date, Abundance, fill = Order), stat = "identity", position = "fill") +
+  facet_wrap("Depth", ncol = 1)
+plotly::ggplotly(p)
+
+p
+```
+
 
 # 4. Environmental data
 
