@@ -1,10 +1,9 @@
+---title:"R Notebook"
+output:html_notebook
 ---
-title: "R Notebook"
-output: html_notebook
----
-
-```{r}
-
+  # This Chunk can be skipped:
+  ``
+`{r}
 get_taxa <- function(data, Taxa, IQR_cutoff = 0.01) {
   
   filt_dat <- data %>%
@@ -15,18 +14,19 @@ get_taxa <- function(data, Taxa, IQR_cutoff = 0.01) {
   index_RA(Library_ID, {{Taxa}}, Abundance)
 
 
-p <- filt_dat %>%
-  group_by({{Taxa}}) %>%
-  mutate(IQR = IQR(RA_Index)) %>%
-  filter(IQR(RA_Index) > IQR_cutoff) %>% # Calculate IQR for each species
-  ungroup() %>%
-  mutate(Tax_1 = fct_reorder({{Taxa}}, IQR, .desc = TRUE)) %>%  # Reorder by IQR
-  ggplot(aes(Tax_1, RA_Index)) +
-  geom_boxplot() +
-  labs(x = as_name(ensym(Taxa)), y = "eDNA-index") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+#p <- filt_dat %>%
+#  group_by({{Taxa}}) %>%
+#  mutate(IQR = IQR(RA_Index)) %>%
+#  filter(IQR(RA_Index) > IQR_cutoff) %>% # Calculate IQR for each species
+#  ungroup() %>%
+#  mutate(Tax_1 = fct_reorder({{Taxa}}, IQR, .desc = TRUE)) %>%  # Reorder by IQR
+#  ggplot(aes(Tax_1, RA_Index)) +
+#  geom_boxplot() +
+#  labs(x = as_name(ensym(Taxa)), y = "eDNA-index") +
+#  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
 
-print(p)
+
+#print(p)
 
 abundant_taxa <- filt_dat %>%
   group_by({{Taxa}}) %>%
@@ -40,8 +40,7 @@ return(abundant_taxa)
 taxa_tmp <- All_COI_data %>% 
   filter(Project_name == "Gradient") %>%
   get_taxa(Taxa = Species, IQR_cutoff = 0.01)
-
-
+taxa_tmp
 
 Gradient_COI <- All_COI_data %>% 
   filter(Project_name == "Gradient") %>%
@@ -50,9 +49,25 @@ Gradient_COI <- All_COI_data %>%
   filter(!str_ends(Family, "@")) %>% 
   index_RA(Library_ID, Species, Abundance, Sample_date, Site_ID, Line_out_depth)
 
+Gradient_COI_genus <- All_COI_data %>% 
+  filter(Project_name == "Gradient") %>%
+  filter(Kingdom == "Animalia") %>%
+  filter(Species %in% taxa_tmp) %>% 
+  filter(!str_ends(Family, "@")) %>% 
+  index_RA(Library_ID, Genus, Abundance, Sample_date, Site_ID, Line_out_depth)
+
 saveRDS(Gradient_COI, "Data_output/Nearshore_gradient_COI.rds")
+`
+``
+
+
+# Slope plot
+
+``
+`{r}
 Gradient_COI <- readRDS("Data_output/Nearshore_gradient_COI.rds")
 
+library(viridis)
 
 Gradient_COI %>% 
   #group_by(Library_ID, Sample_date, Site_ID, Line_out_depth) %>% 
@@ -62,28 +77,98 @@ Gradient_COI %>%
                  color = RA_Index,
                  shape = factor(Sample_date)),
               size = 2) +
-  facet_wrap("Species") +
-  scale_color_gradient2(high = '#4daf4a',
-                       low = "white") +
-  theme_minimal_vgrid(font_size = 6) +
+  facet_wrap("Species", ncol = 4) +
+  #scale_color_gradient2(high = '#4daf4a',
+  #                     low = "white") +
+  #scale_color_gradientn(colours = c("white", "blue", "red")) +
+  scale_color_viridis(option = "magma", direction = -1) +
+  #theme_minimal_vgrid(font_size = 6) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         strip.text = element_text(face = "italic"),
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
 
 ggsave("Figure_output/Nearshore_gradient.pdf", width = 10, height = 7)
 
-```
-
-```{r}
-Gradient_COI %>% 
-  group_by(Species) %>% 
-  summar
+`
+``
 
 
-Gradient_COI
-```
+# Plot alpha diversity
 
-```{r}
+``
+`{r}
+mat <- Gradient_COI |>
+  select(Library_ID, Species, Abundance) |> 
+  pivot_wider(names_from = Species,
+              values_from = Abundance,
+              values_fill = 0) |> 
+  column_to_rownames("Library_ID") |> 
+  rrarefy(sample = 5000)
+
+
+library(vegan)
+richness <- specnumber(mat)
+shannon <- vegan::diversity(mat, index = "shannon")
+simpson <- vegan::diversity(mat, index = "simpson")
+
+
+alpha_div <- data.frame(
+  Library_ID = rownames(mat),
+  Richness = richness,
+  Shannon = shannon,
+  Simpson = simpson
+) |> tibble()
+alpha_div
+
+dat <- Gradient_COI |> 
+  group_by(Library_ID, Line_out_depth, Sample_date, Site_ID) |> 
+  summarise() |> 
+  left_join(alpha_div)
+  
+R <- ggplot(dat) +
+  geom_jitter(aes(Site_ID, -as.numeric(Line_out_depth),
+                 color = Richness,
+                 shape = factor(Sample_date)),
+              size = 2) +
+  scale_color_gradientn(colours = c("blue", "white", "red")) +
+  #theme_minimal_vgrid(font_size = 6) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
+
+Sh <- ggplot(dat) +
+  geom_jitter(aes(Site_ID, -as.numeric(Line_out_depth),
+                 color = Shannon,
+                 shape = factor(Sample_date)),
+              size = 2) +
+  scale_color_gradientn(colours = c("blue", "white", "red")) +
+  #theme_minimal_vgrid(font_size = 6) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
+
+Si <- ggplot(dat) +
+  geom_jitter(aes(Site_ID, -as.numeric(Line_out_depth),
+                 color = Simpson,
+                 shape = factor(Sample_date)),
+              size = 2) +
+  scale_color_gradientn(colours = c("blue", "white", "red")) +
+  #theme_minimal_vgrid(font_size = 6) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+        strip.text = element_text(face = "italic"),
+        panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
+
+
+library(patchwork)
+R + Sh + Si
+(R / Sh / Si) + plot_layout(ncol = 1)
+
+
+`
+``
+
+``
+`{r}
 mat <- Gradient_COI %>% 
   select(Species, Library_ID, RA) %>% 
   pivot_wider(names_from = Species, values_from = RA) %>% 
@@ -97,7 +182,9 @@ heatmap(correlation_matrix)
 
 # Sample code to perform K-means clustering on a correlation matrix
 
-# Assuming `correlation_matrix` is your correlation matrix:
+# Assuming `
+correlation_matrix
+` is your correlation matrix:
 # Step 1: Convert the correlation matrix to a dissimilarity matrix
 # Using 1 - correlation to represent distance
 dissimilarity_matrix <- 1 - correlation_matrix
@@ -108,7 +195,9 @@ k <- 4
 
 # Step 3: Perform K-means clustering
 # Run K-means on the transformed dissimilarity matrix
-# Use the `as.dist` function to treat it as a distance matrix
+# Use the `
+as.dist
+` function to treat it as a distance matrix
 kmeans_result <- kmeans(as.dist(dissimilarity_matrix), centers = k, nstart = 25)
 
 # Step 4: Check the results
@@ -133,8 +222,13 @@ cluster_df
 
 
 
-```
-```{r}
+`
+``
+
+# Kmeans cluster analysis
+
+``
+`{r}
 
 plot_cluster_grad <- function(cluster) {
   
@@ -150,7 +244,7 @@ Gradient_COI %>%
   facet_wrap("Species") +
   scale_color_gradient2(high = '#4daf4a',
                        low = "white") +
-  theme_minimal_vgrid(font_size = 10) +
+  #theme_minimal_vgrid(font_size = 10) +
   theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
         strip.text = element_text(face = "italic"),
         panel.background = element_rect(fill = '#F5F5F5', colour = 'darkgrey'))
@@ -163,6 +257,20 @@ plot_cluster_grad(2)
 plot_cluster_grad(3)
 plot_cluster_grad(4)
 
+`
+``
+# Hierarchical cluster analysis
 
-```
+``
+`{r}
+Gradient_COI
+Gradient_COI |> 
+  mutate(Name = paste(Site_ID, Line_out_depth, Sample_date, sep = "_")) |>
+  select(Name, Species, RA_Index) |>
+  pivot_wider(names_from = Species, values_from = RA_Index) |>
+  column_to_rownames("Name") |>
+  as.matrix() |> 
+  heatmap()
 
+`
+``
