@@ -331,9 +331,6 @@ All_COI_data %>%
   filter(Genus == "Saxidomus") %>% 
   pull(Species) %>%  unique()
 
-
-
-
 ```
 
 
@@ -461,13 +458,7 @@ tmp <- df_12S_QU39 %>%
     arrange(Library_Size) %>% 
   filter(is.na(Sample_type) == FALSE)
   tmp$Index <- seq(nrow(tmp))
-  tmp %>%
-    ggplot() +
-    geom_point(aes(Index, Library_Size, colour = Sample_type, label = Library_ID)) +
-    theme_cowplot(12) +
-  theme(aspect.ratio = 1,
-        strip.background =element_blank()) +
-  geom_abline(intercept = 10000, linetype = 4)
+
 
 # Filter small and bad libraries
 Good_12S_QU39 <- df_12S_QU39 %>%
@@ -480,7 +471,7 @@ Good_12S_QU39 <- df_12S_QU39 %>%
   select(Library_ID, Hakai_ID = `Hakai ID`, Sample_date, Site_ID, Line_out_depth,
          Class = Group, Genus, Species = Taxa, Taxa, Abundance)
 
-Good_12S_QU39
+All_12S_data <- Good_12S_QU39
 ```
 
 
@@ -493,7 +484,6 @@ The flowing code will download the needed data sets from Google Drive server and
 
 ```{r eval=FALSE, include=FALSE}
 # Confirm authorisation with googledrive
-drive_auth()
 
   require(googledrive)
 drive_auth()
@@ -514,27 +504,7 @@ df_count_2017 <- readRDS("Data_import/Microscopy/Hakai_Zooplankton_2013-2017_AN.
 
 ```
 
-The count data set from QU39, counted by DFO
 
-## Summarize most important zooplankton taxa by biomass
-
-```{r}
-
-df_count_2017 %>%
-  group_by(Genus) %>% 
-  summarise(Biomass = sum(Biomass))
-  
-  
-  
-```
-View filtered volume per sample
-```{r}
-df_count_2017 %>%
-  filter(Station == "QU39") %>% 
-  group_by(Date, , `Volume Filtered(m3)`, region_name) %>% 
-  summarise() %>% 
-  arrange(Date)
-```
 
 
 
@@ -549,10 +519,7 @@ METADATA_16S <- read_csv("Data_import/Colleen_16S/QU39_2017-2019microbes_METADAT
 TAX_16S <- read_csv("Data_import/Colleen_16S/QU39_2017-2019microbes_TAXA.csv")
 
 
-
-METADATA_16S
-
-Good_16S_QU39 <- ASV_16S |> 
+All_16S_data  <- ASV_16S |> 
   pivot_longer(!1, names_to = "Sample_ID", values_to = "Abundance") |>
   left_join(TAX_16S) |> 
   rename(ASV = ...1) |> 
@@ -577,59 +544,16 @@ tmp <- DF_16S %>%
 
 
 
-
-# TO FIX
-
-## List contributing Hakai staff
+# These data are generated
 
 ```{r}
-
-
-
-
-personel <- All_COI_data %>%
-  group_by(Sample_date) %>% 
-  summarize(Sample_technician = unique(Sample_technician),
-            Extraction_staff = unique(Extraction_staff)) %>%
-  pivot_longer(2:3, names_to = "Task", values_to = "technician") %>% 
-  separate(technician, sep = ",", into = c("A", "B", "C", "D")) %>% 
-  pivot_longer(3:6, values_to = "tecnichian") %>%
-  filter(is.na(tecnichian) == FALSE) %>%
-  filter(year(Sample_date) == 2017) %>% 
-  select(!name)
-
-# Sampling staff  
-personel %>% 
-  filter(Task == "Sample_technician") %>%
-  group_by(tecnichian) %>% 
-  summarise(Days_Sampled = n()) %>% 
-  arrange(-Days_Sampled)
-
-# Extraction staff
-personel %>% 
-  filter(Task == "Extraction_staff") %>%
-  group_by(tecnichian) %>% 
-  summarise(Days_Extracted = n()) %>% 
-  arrange(-Days_Extracted)
-  
+All_18S_data
+All_COI_data
+All_16S_data
+All_12S_data
 ```
 
 
 
-```{r}
-# Import downloaded rds (compact r data) files
-ASVsp_12S_2017 <- read_csv("Data_import/12S/MiFish-E_species_table_2017.csv")
-Samptab_12S <- readRDS("Data_import/12S/Samptab_12S.rds")
 
-Samptab_12S
-
-
-# Combine the three components to a tidy data tibble
-df_12S_2017 <- ASVsp_12S_2017 %>%
-  pivot_longer(!1:5,  names_to = "Library_ID", values_to = "Abundance") %>% 
-  full_join(Samptab_12S, by = "Library_ID")
-
-
-df_12S_2017
-```
 

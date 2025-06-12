@@ -2,6 +2,11 @@
 title: "R Notebook"
 ---
 
+
+This script is a direct continuation of 1_Prepare_Datasets.Rmd.
+Environment from there has to be loaded before progressing.
+
+
 # 0. Prepare environment
 
 Load necessary packages and import functions.
@@ -67,13 +72,6 @@ All_18S_data_pr2 %>%
   geom_abline(intercept = 10000, linetype = 4)
 ggsave("Figure_output/Sequencing_Depth_18SPR.pdf", width = 7, height = 4.5)
 
-All_18S_data_pr2 %>%
-  group_by(Library_ID, Sample_type) %>% 
-  summarise()
-
-All_18S_data_pr2
-All_18S_data_pr2 %>% 
-  pull(Sample_type) %>% unique
 
 
 # Filter out libraries under threshold line
@@ -146,6 +144,8 @@ All_COI_data %>%
 ggsave("Figure_output/Sequencing_Depth_COI.pdf", width = 7, height = 4.5)
 
 
+
+
 # Filter out libraries under threshold line
 Good_COI_data <- All_COI_data %>% 
   group_by(Library_ID) %>%
@@ -192,6 +192,35 @@ COI_filtered_df <- Good_COI_data %>%
            ASV, Species, Genus, Family, Order, Class, Phylum) %>% 
   summarise(Abundance = sum(Abundance))
 ```
+
+
+
+# 3. Filter and normalize 16S data
+
+Force 16S data to same metadata standard as 18S and COI
+
+```{r}
+colnames(All_16S_data)
+```
+
+
+```{r}
+rarefied_16S_df <- All_16S_data |>
+  transmute(
+    Library_ID = paste(Sample_ID, "_16S"),
+    Hakai_ID = Sample_ID,
+    Line_out_depth = Depth,
+    Sample_date = Date,
+    Project_name = Project,
+    ASV, Species, Genus, Family, Order, Class, Phylum, Abundance
+  ) |> 
+  rarefy_sequence_depth(sample = Library_ID, taxa = ASV, abundance = Abundance)
+
+
+rarefied_16S_df
+```
+
+
 
 
 
@@ -246,30 +275,6 @@ pr2_Genus <- pr2_18S_filtered_df %>%
             Phylum, Class, Order, Family, Genus)
 
 
-#pr2_family <- pr2_18S_filtered_df %>% 
-#  filter(Genus %!in% pr2_genus) %>% 
-#  get_taxa(Family, IQR_cutoff = 0.01)
-#pr2_Family <- pr2_18S_filtered_df %>% 
-#  filter(Family %in% pr2_family) %>% 
-#  group_by(Library_ID, Taxa = Family) %>% 
-#  summarise(Abundance = sum(Abundance),
-#            Level = "Family",
-#            Hakai_ID, Sample_date, Line_out_depth,
-#            Phylum, Class, Order, Family)
-
-
-#pr2_order <- pr2_18S_filtered_df %>% 
-#  filter(Genus %!in% pr2_genus,
-#         Family %!in%  pr2_family) %>% 
-#  get_taxa(Order, IQR_cutoff = 0.05)
-#pr2_Order <- pr2_18S_filtered_df %>% 
-#  filter(Order %in% pr2_family) %>% 
-#  group_by(Library_ID, Taxa = Order) %>% 
-#  summarise(Abundance = sum(Abundance),
-#            Level = "Order",
-#            Hakai_ID, Sample_date, Line_out_depth,
-#            Phylum, Class, Order)
-
 pr2_class <- pr2_18S_filtered_df %>% 
   filter(Genus %!in% pr2_genus,
          #Family %!in%  pr2_family,
@@ -310,8 +315,8 @@ pr2_18S_glomm_indexed <- Seq %>%
   left_join(Samp, by = "Library_ID") %>% 
   left_join(Tax, by = "Taxa")
 
-pr2_genus
 ```
+
 ### COI
 ```{r}
 COI_species <- get_taxa(COI_filtered_df, Species, IQR_cutoff = 0.01)
@@ -374,7 +379,6 @@ Species_12S <- Good_12S_QU39 %>%
             Hakai_ID, Sample_date, Line_out_depth,
             Class, Genus, Species)
 
-Species_12S
 
 Seq <- Species_12S %>% 
   group_by(Library_ID, Taxa) %>% 
@@ -401,8 +405,6 @@ glomm_indexed_12S
 
 
 ```{r}
-
-
 
 COI_genus <- COI_filtered_df %>%
   filter(Species %!in% COI_species) %>% 
@@ -440,10 +442,80 @@ COI_glomm_indexed <- Seq %>%
 
 
 
+## 16S
+
+```{r}
+genus_16S <- get_taxa(rarefied_16S_df, Genus, IQR_cutoff = 0.05)
+Genus_16S <- rarefied_16S_df %>% 
+  filter(Genus %in% genus_16S) %>% 
+  group_by(Library_ID, Taxa = Genus) %>% 
+  summarise(Abundance = sum(Abundance),
+            Level = "Genus",
+            Hakai_ID, Sample_date, Line_out_depth,
+            Phylum, Class, Order, Family, Genus)
+
+
+class_16S <- rarefied_16S_df %>% 
+  filter(Genus %!in% genus_16S,
+         #Family %!in%  pr2_family,
+         #Order %!in%  pr2_order
+         ) %>% 
+  get_taxa(Class, IQR_cutoff = 0.05)
+Class_16S <- rarefied_16S_df %>% 
+  filter(Class %in% class_16S) %>% 
+  group_by(Library_ID, Taxa = Class) %>% 
+  summarise(Abundance = sum(Abundance),
+            Level = "Class",
+            Hakai_ID, Sample_date, Line_out_depth,
+            Phylum, Class)
+
+
+glomm_16S <- bind_rows(Genus_16S,
+                           Class_16S)
+
+
+
+Seq <- glomm_16S %>% 
+  group_by(Library_ID, Taxa) %>% 
+  summarise(Abundance = sum(Abundance)) %>% 
+  index_RA(Library_ID, Taxa, Abundance)
+
+
+Samp <- glomm_16S %>% 
+  group_by(Library_ID, Hakai_ID, Sample_date, Line_out_depth) %>% 
+  summarise()
+
+Tax <- glomm_16S %>% 
+  group_by(Taxa, Phylum, Class, Order, Family, Genus) %>% 
+  summarise()
+
+glomm_indexed_16S <- Seq %>% 
+  left_join(Samp, by = "Library_ID") %>% 
+  left_join(Tax, by = "Taxa")
+
+
+  
+```
+
+
+```{r}
+rarefied_16S_df |> 
+  group_by(Genus, Order) |> 
+  summarise(Abundance = sum(Abundance)) |>
+  arrange(-Abundance)
+```
+
+
+
+
+
+
+
+
 Most abundant bacteria:
 
 ```{r}
-abundant_Orders <- Good_16S_QU39 |>
+abundant_Orders <-  |>
   #filter(Phylum == "Cyanobacteria") |> 
   
   
@@ -466,19 +538,17 @@ abundant_Orders <- Good_16S_QU39 |>
 
 
 
-```{r}
-p <- Good_16S_QU39 |> 
-  group_by(Order, Date, Depth) |> 
-  summarise(Abundance = sum(Abundance)) |>
-  group_by(Order) |> 
-  filter(Order %in% abundant_Orders) |> 
-  ggplot() +
-  geom_bar(aes(Date, Abundance, fill = Order), stat = "identity", position = "fill") +
-  facet_wrap("Depth", ncol = 1)
-plotly::ggplotly(p)
 
-p
+
+
+```{r}
+COI_glomm_indexed
+glomm_indexed_12S
+pr2_18S_glomm_indexed
+glomm_indexed_16S
 ```
+
+
 
 
 # 4. Environmental data
@@ -608,340 +678,10 @@ bottle_file <- niskin %>%
 saveRDS(pr2_18S_glomm_indexed, "Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 saveRDS(COI_glomm_indexed, "Data_output/Data_merge/COI_glomm_indexed.rds")
 saveRDS(glomm_indexed_12S, "Data_output/Data_merge/12S_glomm_indexed.rds")
+saveRDS(glomm_indexed_16S, "Data_output/Data_merge/16S_glomm_indexed.rds")
 saveRDS(bottle_file, "Data_output/Data_merge/bottle_file.rds")
 ```
 
-
-
-
-
-# Plotting functional groups
-
-
-```{r}
-COI_glomm_indexed %>% 
-  pull(Taxa) %>% unique()
-```
-
-
-
-```{r}
-# Phytoplankton - primary producers, including various autotrophic groups
-phytoplankton <- c("Aureococcus", "Bathycoccus", "Biecheleria", "Cerataulina", 
-                   "Chaetoceros", "Chrysophyceae", "Coscinodiscus", "Dicrateria",
-                   "Dictyocha", "Ditylum", "Gymnodinium", "Guinardia", 
-                   "Hemiselmis", "Heterocapsa", "Karlodinium", "Micromonas", 
-                   "Minidiscus", "Navicula", "Noctilucophyceae", "Ostreococcus", 
-                   "Phaeocystis", "Picochlorum", "Prorocentrum", "Pseudo-nitzschia", 
-                   "Rhizosolenia", "Skeletonema", "Teleaulax", "Thalassiosira", 
-                   "Triparma")
-
-# Zooplankton - primarily heterotrophic protists and small animals
-zooplankton <- c("Acantharea_3b", "Askenasia", "Choreotrichida", "Didiniidae",
-                 "Laboea", "Leegaardiella", "Litostomatea", "Pelagostrobilidium", 
-                 "Protoperidinium", "Rimostrombidium_A", "Strobilidiidae_A", 
-                 "Strobilidiidae_I", "Strombidiida", "Strombidiidae", "Tintinnida", 
-                 "Tintinnidae", "Tontoniidae_B")
-
-# Heterotrophic Flagellates - often bacterivores or part of microbial loops
-heterotrophic_flagellates <- c("Cryothecomonas", "Paraphysomonas", "Picomonas", 
-                               "Telonemia-Group-1", "Telonemia-Group-2")
-
-# Mixotrophs - capable of both autotrophic and heterotrophic feeding modes
-mixotrophs <- c("Chrysochromulina", "Haptolina", "Haptophyta", "Haptophyta_Clade_HAP3", 
-                "Prymnesiales", "Prymnesiophyceae", "Prymnesium")
-
-# Parasitic Protists - species known primarily as parasites or pathogens
-parasitic_protists <- c("Hematodinium", "Syndinium", "Thalassomyces")
-
-# Microbial or fungal-like protists - not traditional phytoplankton or zooplankton, often decomposers
-microbial_fungi <- c("Aplanochytrium", "Cryptomycota", "Fungi", "Labyrinthulomycetes", 
-                     "Oomycota", "Pucciniomycotina", "Thraustochytriaceae")
-```
-
-```{r}
-pr2_18S_glomm_indexed  %>% 
-  filter(Taxa %in% phytoplankton,
-         Line_out_depth == 0,
-         year(Sample_date) != 2019,
-         Level != "Division") %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index, colour = Division)) +
-  facet_wrap(~Taxa)
-
-
-pr2_18S_glomm_indexed  %>% 
-  filter(Taxa %in% mixotrophs,
-         Line_out_depth == 0,
-         year(Sample_date) != 2019,
-         Level != "Division") %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index, colour = Division)) +
-  facet_wrap(~Taxa)
-
-
-
-pr2_18S_glomm_indexed  %>% 
-  filter(Taxa %in% c(zooplankton, heterotrophic_flagellates),
-         Line_out_depth == 0,
-         year(Sample_date) != 2019,
-         Level != "Division") %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index, colour = Division)) +
-  facet_wrap(~Taxa)
-
-pr2_18S_glomm_indexed  %>% 
-  filter(Taxa %in% parasitic_protists,
-         Line_out_depth == 0,
-         year(Sample_date) != 2019,
-         Level != "Division") %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index, colour = Division)) +
-  facet_wrap(~Taxa)
-
-pr2_18S_glomm_indexed  %>% 
-  filter(Taxa %in% microbial_fungi,
-         Line_out_depth == 0,
-         year(Sample_date) != 2019,
-         Level != "Division") %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index, colour = Division)) +
-  facet_wrap(~Taxa)
-```
-
-
-
-
-
-## Plot some importan PP genera
-```{r}
-
-
-tmp1 <- tmp %>% 
-  filter(Genus %in% c(
-    "Thalassiosira",
-    "Skeletonema",
-    "Chaetoceros",
-    "Ditylum",
-    "Ceratium",
-    "Protoperidinium",
-    "Alexandrium",
-    "Micromonas",
-    "Bathycoccus",
-    "Rhodomonas",
-    "Phaeocystis",
-    "Pseudo-nitzschia"
-  )) %>%
-  filter(Line_out_depth == 0,
-         year(Sample_date) %in% c(2016, 2017, 2018)) %>%
-  index_RA(Library_ID, Genus, abundance = Abundance,
-           Sample_date)
-
-tmp1  %>% 
-  ggplot() +
-  geom_line(aes(Sample_date, RA_Index)) +
-  facet_wrap(~Genus)
-
-  mutate(Date = factor(Sample_date)) %>% 
-  ggplot() +
-  #geom_bar(aes(Date, RA_Index, fill = Genus), stat = "identity", position = "fill") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
-
-plotly::ggplotly(p)
-
-tmp
-  
-```
-
-
-
-
-
-```{r}
-tmp <- Indexed_18S_pr2 <- Good_18S_data_pr2 %>%
-    filter(Sample_type == "DNA",
-         Project_name == "QU39") %>% 
-  index_RA(sample = Library_ID, taxa = Class, abundance = Abundance,
-           Sample_date, Site_ID, Project_name, Line_out_depth, Sample_type)
-
-tmp
-
-
-
-
-Indexed_18S_pr2 %>% 
-  pull(Class) %>%  unique()
-```
-
-
-```{r}
-Indexed_18S_pr2 %>% 
-  filter(Class == "Bacillariophyta") %>% 
-      mutate(Depth = factor(Line_out_depth, levels = c(
-        250, 100, 30, 5, 0 ))) %>% 
-      ggplot() +
-      geom_point(aes(Sample_date, Depth, fill = RA_Index))
-      
-```
-
-
-
-```{r}
-pr2_18S_glomm_indexed
-saveRDS(pr2_18S_glomm_indexed, file = "Data_output/pr2_18S_glomm_indexed.rds")
-```
-
-
-# Same but for COI
-
-```{r}
-# Get list of Straig of Georgia zooplankton taxa. 
-Taxa_MIC <- df_count_2017 %>%
-  filter(Abundance > 0) %>%
-  group_by(Genus, Tax1) %>% 
-  summarise(Abundance = sum(Abundance)) %>% 
-  mutate(Species = ifelse(Tax1 == "*sp.", paste(Genus, "sp.", sep = " "), paste(Genus, Tax1, sep = " "))) %>%
-  mutate(Level = ifelse(Tax1 == "*sp.", "Genus", "Species")) %>% 
-  pull(Genus) %>% unique()
-
-COI_filtered_df <- Good_COI_data %>%
-   filter(Project_name == "QU39",
-         year(Sample_date) %in% c(2017)) %>%
-    filter(Sample_type == "eDNA",
-         Kingdom == "Animalia") %>%
-  filter(Genus %in% Taxa_MIC) %>% 
-  filter(is.na(Abundance) == FALSE) %>%
-  mutate(ASV = paste(ASV, MiSeq_run)) %>% 
-  group_by(Library_ID, Hakai_ID, Line_out_depth, Sample_date, Project_name,
-           ASV, Species, Genus, Family, Order, Class, Phylum) %>% 
-  summarise(Abundance = sum(Abundance))
-```
-
-```{r}
-get_taxa <- function(data, Taxa, IQR_cutoff = 0.01) {
-  
-  filt_dat <- data %>%
-  filter(!str_ends({{Taxa}}, "@")) %>%
-  filter(!str_ends({{Taxa}}, "X")) %>% 
-  filter(Line_out_depth %in% c(0, 5, 30, 100)) %>%
-  filter(Abundance > 0) %>%
-  index_RA(Library_ID, {{Taxa}}, Abundance)
-
-
-p <- filt_dat %>%
-  group_by(Species) %>%
-  mutate(IQR = IQR(RA_Index)) %>%
-  filter(IQR(RA_Index) > IQR_cutoff) %>% # Calculate IQR for each species
-  ungroup() %>%
-  mutate(Tax_1 = fct_reorder({{Taxa}}, IQR, .desc = TRUE)) %>%  # Reorder by IQR
-  ggplot(aes(Tax_1, RA_Index)) +
-  geom_boxplot() +
-  labs(x = as_name(ensym(Taxa)), y = "eDNA-index") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-
-abundant_taxa <- filt_dat %>%
-  group_by({{Taxa}}) %>%
-  filter(IQR(RA_Index) > IQR_cutoff) %>% # Adjust 0.5 to your desired IQR threshold
-  pull({{Taxa}}) %>% unique()
-
-print(p)
-return(abundant_taxa)
-  
-}
-
-get_taxa(tmp, Species, IQR_cutoff = 0.01)
-```
-
-
-```{r}
-Species_level <- tmp %>%
-  filter(!str_ends(Species, "@")) %>%
-  filter(!str_ends(Species, "X")) %>% 
-  filter(Line_out_depth %in% c(0, 5, 30, 100)) %>%
-  filter(Abundance > 0) %>%
-  index_RA(Library_ID, Species, Abundance)
-
-
-Species_level %>%
-  group_by(Species) %>%
-  mutate(IQR = IQR(RA_Index)) %>%
-  filter(IQR(RA_Index) > 0.01) %>% # Calculate IQR for each species
-  ungroup() %>%
-  mutate(Species = fct_reorder(Species, IQR, .desc = TRUE)) %>%  # Reorder by IQR
-  ggplot(aes(Species, RA_Index)) +
-  geom_boxplot() +
-  labs(x = "Species", y = "RA Index") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-
-abundant_species <- Species_level %>%
-  group_by(Species) %>%
-  filter(IQR(RA_Index) > 0.001) %>% # Adjust 0.5 to your desired IQR threshold
-  pull(Species) %>% unique()
-
-abundant_species
-```
-
-
-```{r}
-Genus_level <- tmp %>%
-  filter(!str_ends(Genus, "@")) %>%
-  filter(!str_ends(Genus, "X")) %>% 
-  filter(Line_out_depth %in% c(0, 5, 30, 100)) %>%
-  filter(Species %!in% abundant_species) %>% 
-  index_RA(Library_ID, Genus, Abundance)
-
-Genus_level %>%
-  group_by(Genus) %>%
-  #filter(IQR(RA_Index) > 0.001) %>% # Adjust 0.5 to your desired IQR threshold
-  ungroup() %>% 
-  mutate(Genus = fct_reorder(Genus, RA_Index, .fun = ~ quantile(.x, 0.75), .desc = TRUE)) %>%
-  ggplot() +
-  geom_boxplot(aes(Genus, RA_Index)) +
-  labs(x = "Genus", y = "RA Index") +
-  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-
-
-abundant_genera <- Genus_level %>%
-  group_by(Genus) %>%
-  #filter(IQR(RA_Index) > 0.01) %>% # Adjust 0.5 to your desired IQR threshold
-  pull(Genus) %>% unique()
-
-abundant_genera
-```
-
-
-
-```{r}
-Species <- tmp %>% 
-  filter(Species %in% abundant_species) %>% 
-  group_by(Library_ID, Taxa = Species) %>% 
-  summarise(Abundance = sum(Abundance),
-            Level = "Species",
-            Hakai_ID, Sample_date, Line_out_depth,
-            Phylum, Class, Order, Family, Genus, Species)
-
-
-
-Genus <- tmp %>% 
-  filter(Genus %in% abundant_genera) %>% 
-  group_by(Library_ID, Taxa = Genus) %>% 
-  summarise(Abundance = sum(Abundance),
-            Level = "Genus",
-            Hakai_ID, Sample_date, Line_out_depth,
-            Phylum, Class, Order, Family, Genus)
-
-
-
-COI_glom <- bind_rows(Species, Genus)
-
-COI_glom_indexed <- COI_glom %>%
-  index_RA(Library_ID, Taxa, Abundance) %>% 
-  left_join(select(COI_glom, !Abundance), by = c("Library_ID", "Taxa"))
-
-COI_glom_indexed
-```
 
 
 
