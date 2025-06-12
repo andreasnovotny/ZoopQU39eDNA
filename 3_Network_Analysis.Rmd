@@ -37,9 +37,11 @@ library(tidygraph)
 library(ggraph)
 library(pheatmap)
 ```
+
 ```{r}
 # Functional groups
 functional_groups <- c(
+  "Heterotrophic_bacteria",
   "Autotrophic_protist",
   "Mixotrophic_protist",
   "Heterotrophic_protist",
@@ -50,6 +52,7 @@ functional_groups <- c(
 
 # Corresponding colors
 colors <- c(
+  "Heterotrophic_bacteria" = "grey",
   "Autotrophic_protist" = "#66C2A5",
   "Mixotrophic_protist" = "#FC8D62",
   "Heterotrophic_protist" = "#FFD92F",
@@ -71,6 +74,7 @@ Metrics_levels <- c(
 ```	
 
 
+
 Read in Hakai Datasets
 ```{r}
 # These datasets have been created in the "2_Merge_COI_18S_Env.Rmd" file
@@ -78,9 +82,12 @@ Read in Hakai Datasets
 Dataset_COI <- readRDS("Data_output/Data_merge/COI_glomm_indexed.rds")
 Dataset_18S <- readRDS("Data_output/Data_merge/pr2_18S_glomm_indexed.rds")
 Dataset_12S <- readRDS("Data_output/Data_merge/12S_glomm_indexed.rds")
+Dataset_16S <- readRDS("Data_output/Data_merge/16S_glomm_indexed.rds")
 #Dataset_Bottle <- readRDS("Data_output/Data_merge/bottle_file.rds")
 Functional_Traits <- read_excel("Data_import/Functional_Traits.xlsx")
 ```
+
+
 
 Extract some taxonomy tables, used to construct trait dataset
 ```{r}
@@ -88,6 +95,11 @@ Dataset_18S
 taxatab_18S <- Dataset_18S %>%
   group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
   summarise()
+
+taxatab_16S <- Dataset_16S %>%
+  group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
+  summarise()
+
 
 taxatab_COI <- Dataset_COI %>%
   group_by(Phylum, Class, Order, Family, Genus, Taxa) %>% 
@@ -103,6 +115,12 @@ taxtab_12S %>%
 
 taxatab_COI %>% 
   write_csv("Data_output/taxtab_COI.csv")
+
+taxatab_16S |> 
+  write_csv("Data_output/taxtab_18S.csv")
+
+taxatab_16S
+
 
 rm(taxatab_18S, taxatab_COI, taxtab_12S)
 ```
@@ -255,6 +273,59 @@ Interpolated_18S_Data <- smoothed_data %>%
   summarise(Abundance = sum(Smoothed_Relative_Abundance)/4)
 ```
 
+
+Interpolate 16S: 
+```{r}
+
+# Complete the data frame with all combinations of Sample_ID, Sample_date, Taxa, and Sampling_Depth
+complete_data <- Dataset_16S %>%
+  filter(Line_out_depth %in% c(0,5,30,100)) %>%
+  mutate(Line_out_depth = factor(Line_out_depth, levels = c("0", "5", "30", "100"))) %>%
+  #filter(Phylum != "Metazoa") %>%
+  #  filter(Phylum %in% c(
+  #  "Chlorophyta",
+  #  "Cryptophyta",
+  #  "Dinoflagellata",
+  #  "Haptophyta",
+  #  "Ochrophyta"
+  #)) %>% 
+  #filter(is.na(Genus)==FALSE) %>% 
+  mutate(Sample_date = as.Date(Sample_date)) %>% 
+  complete(Sample_date, Taxa, Line_out_depth, fill = list(Abundance = 0)) %>%
+  filter(Sample_date >= start_date & Sample_date <= end_date) %>%
+  #filter(Sample_date <= end_date) %>%
+  # Ensure dates are properly ordered after completion
+  arrange(Sample_date, Taxa, Line_out_depth)
+
+
+# NOTE: Commented out to reuse the series for COI
+strict_weekly_dates <- seq.Date(from = min(complete_data$Sample_date),
+                                to = max(complete_data$Sample_date),
+                                by = "week")
+
+smoothed_data <- complete_data %>%
+  # Expand to include all combinations of Taxa, Depth, and weekly dates
+  group_by(Taxa, Line_out_depth) %>%
+  complete(Sample_date = strict_weekly_dates) %>%
+  arrange(Sample_date) %>%
+  # Interpolate missing values in RA_Index within each group
+  mutate(Abundance = ifelse(is.na(Abundance),
+                           na.approx(Abundance, rule = 2, na.rm = FALSE),
+                           Abundance)) %>%
+  # Apply 2-week rolling mean for smoothing (7-day intervals)
+  mutate(Smoothed_Relative_Abundance = rollmean(Abundance, k = 4, fill = NA, align = "center")) %>%
+  ungroup() %>%
+  # Filter to include only rows with Smoothed_Relative_Abundance calculated
+  filter(!is.na(Smoothed_Relative_Abundance)) %>% 
+  filter(Sample_date %in% strict_weekly_dates)
+
+Interpolated_16S_Data <- smoothed_data %>% 
+  group_by(Taxa, Sample_date) %>% 
+  summarise(Abundance = sum(Smoothed_Relative_Abundance)/4)
+```
+
+
+
 Check the limits of interpolated datasets:
 
 ```{r}
@@ -266,6 +337,9 @@ Interpolated_12S_Data$Sample_date %>% max()
 
 Interpolated_18S_Data$Sample_date %>% min()
 Interpolated_18S_Data$Sample_date %>% max()
+
+Interpolated_16S_Data$Sample_date %>% min()
+Interpolated_16S_Data$Sample_date %>% max()
 ```
 
 
@@ -299,6 +373,20 @@ seasonal_data_18S <- Interpolated_18S_Data %>%
   drop_na()
 
 
+#### 18S
+seasonal_data_16S <- Interpolated_16S_Data %>%
+  # Extract seasonal data from STL time series, per taxa
+  group_by(Taxa) %>%
+  do({
+    ts_data <- ts(.$Abundance, start = c(2017, 15), frequency = 52)  # Weekly frequency
+    stl_decomposition <- stl(ts_data, s.window = "periodic")
+    data.frame(Sample_date = .$Sample_date, Seasonal = stl_decomposition$time.series[, "seasonal"])
+  }) %>%
+  ungroup() %>%
+  spread(key = Taxa, value = Seasonal) %>%
+  drop_na()
+
+
 #### 12S
 seasonal_data_12S <- Interpolated_12S_Data %>%
   filter(Sample_date != "2017-01-08") %>% 
@@ -319,38 +407,15 @@ start_date <- as.Date("2017-01-15")
 end_date <- as.Date("2019-01-13")
 
 seasonal_data_all <-left_join(seasonal_data_18S, seasonal_data_COI, by = "Sample_date") %>%
-  left_join(seasonal_data_12S, by = "Sample_date") %>% 
+  left_join(seasonal_data_12S, by = "Sample_date") %>%
+  left_join(seasonal_data_16S, by = "Sample_date") |> 
   filter(Sample_date >= start_date & Sample_date <= end_date)
-seasonal_data_all
-
-
-
 
 ## seasonal_data_all will be used for correlation analysis later.
 ```
 
 
 
-### Test
-
-### End Test
-
-
-
-
-Test matrix of just TS data
-
-```{r}
-#weekly_data_all <- pivot_wider(Interpolated_12S_Data, names_from = Taxa, values_from = Abundance) %>% 
-#  left_join(pivot_wider(Interpolated_18S_Data, names_from = Taxa, values_from = Abundance)) %>% 
-#  left_join(pivot_wider(Interpolated_COI_Data, names_from = Taxa, values_from = Abundance)) %>% 
-#  filter(Sample_date != "2017-01-08", 
-#         Sample_date != "2019-01-20",
-#         Sample_date != "2019-01-27",
-#         Sample_date != "2019-02-03")
-
-#weekly_data_all
-```
 
 Remove unwanted objects from interpolation and STL steps:
 ```{r}
@@ -359,13 +424,16 @@ rm(complete_data, smoothed_data, end_date, start_date, strict_weekly_dates)
 # Remove Original Data
 rm(Dataset_12S, Dataset_18S, Dataset_COI)
 # Interpolated Data
-rm(Interpolated_12S_Data, Interpolated_18S_Data, Interpolated_COI_Data)
+rm(Interpolated_12S_Data, Interpolated_18S_Data, Interpolated_COI_Data, Interpolated_16S_Data)
 # STL Seasonal Data
-rm(seasonal_data_COI, seasonal_data_18S, seasonal_data_12S)
+rm(seasonal_data_COI, seasonal_data_18S, seasonal_data_12S, seasonal_data_16S)
+
+saveRDS(seasonal_data_all, "Data_output/Seasonal_data_all.rds")
 ```
 
 
 # 3. Construct Trait Based Metaweb
+
 
 Constructing a trait based metaweb using size and feeding assumptions:
 
@@ -374,7 +442,7 @@ and streptophytes (land plants).
 
 - Protozoan predators are non-metazoan eukaryotes with known heterotrophy.
 - They can also be mixotrophs, but not purely autotrophs.
-- They prey on any genus that atr in all size classes lower than themselves, either heterotrophic or phototrophic.
+- They prey on any genus that are in all size classes lower than themselves, either heterotrophic or phototrophic.
 
 ```{r}
 # Protozoan Predators:
@@ -392,6 +460,7 @@ pprey <- Functional_Traits %>%
          is.na(Parasitism),
          is.na(Symbiont),
          Phylum %!in% c("Fungi"),
+         Taxa != "uncultured",
          !is.na(Sizeclass)) %>% 
   select(Prey = Taxa, Prey_size = Sizeclass)
   
@@ -469,10 +538,16 @@ FISH <- tidyr::crossing(fishpred, fishprey)
 
 ```
 
+- bacteria are eaten by heterotrophs that are 1
+
+
+
+
 ```{r}
 METAWEB <- bind_rows(PZP, CZP, OZP, FISH) %>% 
-  select(Predator, Prey)
-
+  select(Predator, Prey) |> 
+  filter(Predator %in% colnames(seasonal_data_all),
+         Prey %in% colnames(seasonal_data_all))
 METAWEB
 # METAWEB is a adjacency dataframe that will be used later to guide correlation analysis.
 ```
@@ -491,6 +566,11 @@ Auto-correlations with no lags of all involved species.
 ```{r}
 correlation_matrix_all <- cor(seasonal_data_all %>%
                                 select(-Sample_date), use = "pairwise.complete.obs")
+seasonal_data_all |> 
+  filter(year(Sample_date) == 2017) |> 
+  select(-Sample_date) |> 
+  cor(use = "pairwise.complete.obs",
+      method = "kendall")
 
 ```
 
@@ -536,15 +616,17 @@ pw_ccf <- function(mat, adj.df, max_lag = 3, min_corr = -1) {
 }
 
 
-seasonal_data_all
-
-
 ```
 
 
-```{r}
-Correlation_lags <- pw_ccf(seasonal_data_all, METAWEB, max_lag = 3, min_corr = -1)
 
+
+
+
+```{r}
+
+
+Correlation_lags <- pw_ccf(seasonal_data_all, METAWEB, max_lag = 3, min_corr = -1) 
 
 # plot correlation heatmap:
 
@@ -573,16 +655,6 @@ dev.off()
 
 ```
 
-# TEST with kendalls tau correlation instead of pearson
-
-```{r}
-seasonal_data_all
-```
-
-
-
-
-
 
 
 # 5. Prepare Network
@@ -599,6 +671,12 @@ CORR_WEB <- Correlation_lags %>%
 
 ```{r}
 # Trait information per functional group
+Heterotrophic_bacteria <- Functional_Traits %>% 
+  filter(Heterotrophy == 1,
+         is.na(Phototrophy)) %>% 
+  mutate(FG = "Heterotrophic_bacteria")
+Heterotrophic_bacteria
+
 Autotrophic_protist <- Functional_Traits %>% 
   filter(Phototrophy == 1,
          is.na(Heterotrophy)) %>% 
@@ -644,6 +722,7 @@ peaks <- seasonal_data_all %>%
 # Merge all Node data
 Node_Data <- bind_rows(Autotrophic_protist,
           Heterotrophic_protist,
+          Heterotrophic_bacteria,
           Mixotrophic_protist,
           Omnivorous_zooplankton,
           Carnivorous_zooplankton,
@@ -654,7 +733,8 @@ Node_Data <- bind_rows(Autotrophic_protist,
          Phylum, Class, Order, Family, Genus,
          Phototrophy, Heterotrophy, Mixotrophy, HAB)
 
-rm(Autotrophic_protist, Heterotrophic_protist, Mixotrophic_protist,
+rm(Autotrophic_protist, Heterotrophic_protist, Heterotrophic_protist,
+   Mixotrophic_protist,
    Omnivorous_zooplankton, Carnivorous_zooplankton, Pelagic_fish,
    peaks, pelagic_fish, Het_prot)
 ```
@@ -797,7 +877,9 @@ Autotrophic_protist <- Functional_Traits %>%
 
 Heterotrophic_protist <- Functional_Traits %>% 
   filter(Heterotrophy == 1,
-         is.na(Phototrophy)) %>% 
+         is.na(Phototrophy),
+         TrophicState != "bacteria",
+         TrophicState != "cyanobacteria") %>% 
   mutate(FG = "Heterotrophic_protist")
 
 Mixotrophic_protist <- Functional_Traits %>% 
